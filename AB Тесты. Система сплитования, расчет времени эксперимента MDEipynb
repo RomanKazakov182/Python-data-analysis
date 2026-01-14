@@ -1,0 +1,1262 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "ba375ada-d576-4a34-9c70-c78fce1fe3f2",
+   "metadata": {},
+   "source": [
+    "## Что делаем ##\n",
+    "\n",
+    "Сервис быстрой доставки SkySamokat.\n",
+    "\n",
+    "Периодически клиентам рассылаются пуш-уведомления, в которых описывается специальное предложение недели.\n",
+    "Имеем список клиентов, которые получали эти пуш-уведомления. По результату рассылки они воспользовались или не воспользовались предложением (поле ***flag_conv***).\n",
+    "\n",
+    "Нужно проверить, не будет ли смс-сообщение более эффективным чем пуш-уведомление. Необходимо протестировать систему сплитования и рассчитать время, необходимое для расчета эксперимента."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "1d9556e7-330f-4735-9ed9-cb4d0056fff5",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id_client</th>\n",
+       "      <th>flag_conv</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>1345321</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1345322</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>1345330</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>1345338</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>1345342</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id_client  flag_conv\n",
+       "0    1345321          0\n",
+       "1    1345322          0\n",
+       "2    1345330          0\n",
+       "3    1345338          1\n",
+       "4    1345342          0"
+      ]
+     },
+     "execution_count": 1,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "### Импортируем необходимое\n",
+    "\n",
+    "import pandas as pd\n",
+    "from scipy.stats import pearsonr, spearmanr, mannwhitneyu, ttest_ind\n",
+    "import seaborn as sns\n",
+    "import matplotlib.pyplot as plt\n",
+    "import scipy.stats as stats\n",
+    "import numpy as np\n",
+    "import datetime as dt\n",
+    "import random\n",
+    "import math\n",
+    "\n",
+    "df = pd.read_csv('Данные Бизнес-4.csv', sep=',')\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "81e192a6-11e0-4629-8bb6-9d48ccdf1510",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "<class 'pandas.core.frame.DataFrame'>\n",
+      "RangeIndex: 3169 entries, 0 to 3168\n",
+      "Data columns (total 2 columns):\n",
+      " #   Column     Non-Null Count  Dtype\n",
+      "---  ------     --------------  -----\n",
+      " 0   id_client  3169 non-null   int64\n",
+      " 1   flag_conv  3169 non-null   int64\n",
+      "dtypes: int64(2)\n",
+      "memory usage: 49.6 KB\n"
+     ]
+    }
+   ],
+   "source": [
+    "### Проверяем данные\n",
+    "\n",
+    "df.info()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "b455f7e4-8401-485e-8170-1a9eebc2d138",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "np.int64(0)"
+      ]
+     },
+     "execution_count": 3,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df.duplicated().sum()\n",
+    "\n",
+    "### df.drop_duplicates(inplace = True) (если необходимо удалить дубликаты и перезаписать датафрейм без дубликатов)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "1941cfce-dae3-448e-8432-dabd6d42d10d",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "id_client    0\n",
+       "flag_conv    0\n",
+       "dtype: int64"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df.isnull().sum()\n",
+    "\n",
+    "### df.dropna(inplace = True) (если необходимо удалить нулы и перезаписать датафрейм без дубликатов). По \"умолчанию\" удалять нулы можно, если удаляется не более 5% данных."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "24d7c37a-3aa2-4f65-909e-2e8da334f04b",
+   "metadata": {},
+   "source": [
+    "### Решение ###"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "8b42989d-3251-40ef-83d4-e57e8d8a38e3",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id_client</th>\n",
+       "      <th>flag_conv</th>\n",
+       "      <th>right_symbol</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>1345321</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1345322</td>\n",
+       "      <td>0</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>1345330</td>\n",
+       "      <td>0</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>1345338</td>\n",
+       "      <td>1</td>\n",
+       "      <td>8</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>1345342</td>\n",
+       "      <td>0</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id_client  flag_conv right_symbol\n",
+       "0    1345321          0            1\n",
+       "1    1345322          0            2\n",
+       "2    1345330          0            0\n",
+       "3    1345338          1            8\n",
+       "4    1345342          0            2"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "### 1. Исследуем зависимость пользования предложением от идентификатора клиента.\n",
+    "\n",
+    "df['right_symbol'] = df['id_client'].astype(str).str[-1]\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "d7f70494-b80e-48a7-b41d-534bcbf532a9",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>right_symbol</th>\n",
+       "      <th>conv</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>0.996835</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>0.603715</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>0.543689</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>0.543624</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>0.528662</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>5</th>\n",
+       "      <td>5</td>\n",
+       "      <td>0.545732</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>6</th>\n",
+       "      <td>6</td>\n",
+       "      <td>0.529412</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>7</th>\n",
+       "      <td>7</td>\n",
+       "      <td>0.632258</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>8</th>\n",
+       "      <td>8</td>\n",
+       "      <td>0.563518</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>9</th>\n",
+       "      <td>9</td>\n",
+       "      <td>0.632716</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "  right_symbol      conv\n",
+       "0            0  0.996835\n",
+       "1            1  0.603715\n",
+       "2            2  0.543689\n",
+       "3            3  0.543624\n",
+       "4            4  0.528662\n",
+       "5            5  0.545732\n",
+       "6            6  0.529412\n",
+       "7            7  0.632258\n",
+       "8            8  0.563518\n",
+       "9            9  0.632716"
+      ]
+     },
+     "execution_count": 6,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df_agg = df.groupby('right_symbol').agg(conv = ('flag_conv', 'mean')).reset_index()\n",
+    "df_agg.head(10)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "ad1af9fe-adec-4ce2-bbde-77ecba880410",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "image/png": "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wQeNunXrGtdff32xPDt37jQkGQ899JDh7u5eLHtMTIzx2GOPGZKM1157zdbesWNHIzg42MjJybG1FRQUGM2aNTPq1atnWK1WwzAMY9SoUYa7u7uxefPmC2YtUtrPqsizzz5rSDKOHDlSpr7O9emnnxqSjGuvvbZY+x9//GFIMiZMmGAYhmGcPHnSCAoKMgYPHlzsvMLCQqNly5ZG+/btS/R95swZ48SJE8bcuXMNT09P44EHHiiW2cPDwzh06JCt7fvvvzckGUlJScX62bZtmyHJ+PLLL0u85iJF79W578XFXOhn+ncFBQVGfn6+ERUVZTz00EOXpb8iiYmJhiTj1VdfLdZe9POaNm1aiWsWLlxoSDIWLlxYpjyGcfbPWXR0tGEYhrF27VrDYrEY77//vmEY//v5Tpo0yTh9+rRRs2ZN48svvzS6du160Z95ae9NUb4ff/zxvNd16NDB8Pb2LnN+AMCViakoAACH++mnn7R69WolJibq+eef18yZM3XttdcW2xklLS1N//znP1WnTh25urrK3d1dcXFxkqQtW7aU6LOgoEAFBQXas2ePPv30UwUEBKht27alPv+hQ4f07LPP6plnnikxoiMhIUGSNHbs2DK/nj///FPvvvuu3njjDVWrVq3Uc0JDQ3XttdfqnXfekXR2Osa+fft02223FTvv5MmTWrlypW644YZifbm6uuq2227T3r17tW3bNlvWHj16KCYmpsxZL6awsFAFBQXlmjbw9wVgO3furLCwMC1cuFCStGzZMmVmZmr48OG296ugoEBWq1X9+/fX6tWri001Wr9+vdzd3VWtWjX16dNHdevW1b333mt7/J577pEkffjhh7a2d999V82bN1e3bt2KZTl9+rQkycvL66Kvw2q12nJdioKCAr300ktq0qSJPDw85ObmJg8PD6WkpJT6O+zM/opGOf19+tSNN94oX1/fElOBHKFNmza68cYb9eKLLyo3N7fYY1u3blVBQYFuvfVW3XTTTUpKSnL480uXd/oLAKDiorABAHC4pk2bKjY2Vv369dO///1vTZs2TbNmzdKvv/4q6ezaE127dtXKlSs1YcIELVq0SKtXr7btslB0k1pk165dcnd3l7u7uxo0aKDFixfrs88+U3BwcKnP/+ijj6pOnTp66KGHSjx25MgRubq6qk6dOmV+PWPHjlXXrl1tU0TO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nXc0cuRIjR49WhEREfriiy/Url07dejQQTfeeKNtNAcAAAAAAICz2b3GxoWkpKQoKirKUd05BWtsAAAAAABQ8TltjY0LqehFDQAAAAAAcGWxeyrK22+/fcHHx40bV+a+Fi9erNdee01r167VgQMH9Msvv2jo0KEXvCYpKUnjx4/XX3/9pdDQUD322GMaM2ZMmZ8TAAAAAABcOewubDz44IPy8fFRcHCw/j6LxWKx2FXYOHnypFq2bKmRI0fq+uuvv+j5O3fu1IABA3TnnXfqq6++0h9//KF7771XtWrVKtP1AAAAAADgymJ3YePJJ5/U22+/rd69e+vFF19U7dq1y/3k8fHxio+PL/P577//vho0aKDJkydLkmJiYrRmzRq9/vrrFDYAAAAAAKiC7F5jY8KECdqyZYvy8/MVHR2tiRMnKi8vzxnZSli+fLn69u1brK1fv35as2aNzpw5U+o1eXl5ys7OLnYAAAAAAIArQ7kWD61bt64+++wzLViwQPPnz1dkZKS++OILR2cr4eDBgyVGiNSuXVsFBQXKyMgo9ZpJkyYpICDAdtSvX9/pOZ3h8MnD+mXLLyWm/wAAAAAAUJXZXdjYuHGj7XBzc9PkyZN111136b777lPbtm2dkbEYi8VS7PuiG/2/txd54oknlJWVZTv27Nnj9IyOlluQq7GzxuqT9Z9o85HNZscBAAAAAKDCsHuNjVatWslisRQrKBR9vX79eoeG+7s6dero4MGDxdoOHz4sNzc31ahRo9RrPD095enp6dRczubl5qVuDbppTtocTd82XU2Dm5odCQAAAACACsHuwsbOnTudkaNMOnXqpBkzZhRrmzNnjmJjY+Xu7m5SqstjcPRgzUmbo+V7l+vwycMK9g02OxIAAAAAAKazu7ARFhbmsCc/ceKEUlNTbd/v3LlT69evV1BQkBo0aKAnnnhC+/bts63fMWbMGL377rsaP3687rzzTi1fvlwff/yxvv32W4dlqqjCA8PVIriFNh7eqJnbZ2pk65FmRwIAAAAAwHR2FzamT59+wceHDBlS5r7WrFmjHj162L4fP368JGn48OH67LPPdODAAe3evdv2eEREhGbNmqWHHnpI7733nkJDQ/X2229Xma1eh0QP0cbDGzV7x2z9o/k/5OXmZXYkAAAAAABMZTHs3GbDxeV/642eu75G0feFhYWOS+cE2dnZCggIUFZWlvz9/c2OYxerYdXdM+7WwZMHNbbdWPWP7G92JAAAAAAAnKKs9+9274pitVpth4+Pj1JTU23fV/SiRmXnYnHRoMaDJEnTt01n61cAAAAAQJVnd2ED5urdsLe83Ly0J3uPNhzaYHYcAAAAAABMRWGjkvH18FXviN6Szo7aAAAAAACgKrO7sJGdnW07LBaLTpw4UawNzlc0HWX1/tXan7Pf5DQAAAAAAJjH7sJGYGCgqlevrurVq+vEiRNq3bq1qlevbmuH89X1r6vYkFhJ0u/bfzc5DQAAAAAA5rF7u9eFCxc6IwfsNCR6iNYcWKN5afN0a4tb5ePuY3YkAAAAAAAuO7sLG3Fxcc7IATu1qtNK9fzqaW/OXs1Lm6ch0UPMjgQAAAAAwGVXrsVDlyxZoltvvVWdO3fWvn37JElffvmlli5d6tBwOD+LxaLB0YMlnZ2OYjWsJicCAAAAAODys7uw8dNPP6lfv37y9vZWcnKy8vLyJEk5OTl66aWXHB4Q59czoqd83X114MQBrd2/1uw4AAAAAABcdnYXNiZMmKD3339fH374odzd3W3tnTt3VnJyskPD4cK83LzUt1FfSWz9CgAAAAComuwubGzbtk3dunUr0e7v76/jx487IhPsMKjxIFlk0fpD67U7a7fZcQAAAAAAuKzsLmyEhIQoNTW1RPvSpUvVsGFDh4RC2QX7BqtjvY6SpBnbZpicBgAAAACAy8vuwsbdd9+tBx54QCtXrpTFYtH+/fv19ddf65FHHtG9997rjIy4iKIdURakL1BOXo7JaQAAAAAAuHzs3u71scceU1ZWlnr06KHc3Fx169ZNnp6eeuSRR3Tfffc5IyMuommtpooIjNDO4zs1Z8ccXd/kerMjAQAAAABwWVgMwzDKc+GpU6e0efNmWa1WNWnSRNWqVXN0NqfIzs5WQECAsrKy5O/vb3Ych5mXNk9vrXxLNX1q6qPBH8nVxdXsSAAAAAAAlFtZ79/tnopSxMfHR7GxsWrfvr2tqLFp06bydodL1C2sm/w9/ZVxKkMr9q4wOw4AAAAAAJeF3YWNkSNHqrCwsFhbXl6ennzySXXs2NFhwWAfD1cP9W/UXxJbvwIAAAAAqg67Cxvbt2/XwIEDdeLECUnSwoUL1axZM82bN09//PGHwwOi7AY2HihXi6s2Z2zWjswdZscBAAAAAMDp7C5sLFiwQD4+PurWrZtGjhypa665Rvfee69WrFihVq1aOSEiyirIO0hd6neRxKgNAAAAAEDVYHdhw9PTUz/99JM6d+6sL774Qj/++KMeeughubiUe7kOOFDR1q+Ldy/W8dzj5oYBAAAAAMDJ7N7udfr0syMB+vbtq7/++ku33HKL3nzzTQUGBkqShgwZ4tCAsE90zWhF14jWtqPblJiaqJub3Wx2JAAAAAAAnMbu7V7PHZlhsVh07uUWi6XEwqIVzZW63eu5ktKT9Pry11Xdq7o+ueYTubnYXb8CAAAAAMBUTtvu1Wq1ymq16tixY4qLi1O3bt2UmZkpq9Va4YsaVUWXBl0U5B2kY7nHtGTXErPjAAAAAADgNOVaGGPfvn26+uqrlZSUpJtvvtk2DQUVg5uLmwZEDpAkzdg+Q3YOygEAAAAAoNKwu7CxadMmdejQQX369NFPP/2kiRMnqmfPntqxg+1FK5L+kf3l7uKulMwUbTu6zew4AAAAAAA4hd2Fjbi4OD366KN68803NXToUG3ZskVNmjRRy5Yt9dJLLzkjI8ohwCtAcWFxktj6FQAAAABw5bK7sDFt2jQ98MADtu+rVaumd999V/Pnz9f333/v0HC4NIOjB0uS/tjzhzJOZZicBgAAAAAAx7O7sHHDDTeU2t6hQwclJydfciA4TsPqDdWsVjNZDatmpcwyOw4AAAAAAA5Xrn1ACwsL9euvv2rLli2yWCyKiYnRNddcI1dXV0fnwyUaHD1Yfx75U4mpibq52c3ycPUwOxIAAAAAAA5jd2EjNTVVAwcO1N69exUdHS3DMLR9+3bVr19fM2fOVKNGjZyRE+XUsV5HBfsE6/Cpw0pKT1KfRn3MjgQAAAAAgMPYPRVl3Lhxatiwofbs2aPk5GStW7dOu3fvVkREhMaNG+eMjLgELhYXDWo8SNLZRUTZ+hUAAAAAcCWxu7CRlJSkV199VUFBQba2GjVq6OWXX1ZSUpJDw8Ex+jTqI09XT6VnpWvT4U1mxwEAAAAAwGHsLmx4enoqJyenRPuJEyfk4cH6DRVRNY9q6hnRUxJbvwIAAAAArix2FzYGDRqku+66SytXrpRhGDIMQytWrNCYMWM0ZMgQZ2SEAwxufHbr11X7VungiYMmpwEAAAAAwDHsLmy8/fbbatSokTp16iQvLy95eXmpS5cuioyM1FtvveWMjHCA+gH11bpOaxkyNHP7TLPjAAAAAADgEHbvihIYGKjffvtNKSkp2rp1qwzDUJMmTRQZGemMfHCgIdFDtO7gOs1Nm6tbWtwiLzcvsyMBAAAAAHBJ7C5sFImKilJUVJQjs8DJ2oa0VWi1UO0/sV/z0+ZrYOOBZkcCAAAAAOCS2F3YuO666y74+M8//1zuMHAui8WiQY0HaVryNM3YPkMDogbIYrGYHQsAAAAAgHKze42NX3/9VR4eHgoICCj1QMXWu2Fv+bj7aF/OPiUfSDY7DgAAAAAAl6RcU1HefvttBQcHOzoLLgNvd2/1adhHv237TTO2z1Db0LZmRwIAAAAAoNzsHrFhsViYvlDJDWo8SBZZtPbAWu3N3mt2HAAAAAAAys3uERuGYahXr17y9vaWr6+vQkND1bp1a918882qW7euMzLCwepUq6P2ddtr5b6VmrFthu5pd4/ZkQAAAAAAKBe7R2w8++yzuu6669S7d281bdpUp0+f1rvvvqvo6GgtX77cGRnhBIMbD5YkLUhfoJP5J01OAwAAAABA+VgMwzAutRPDMHTHHXcoLS1NCxcudEQup8nOzlZAQICysrLk7+9vdhzTGIah+xPu166sXRrVapSujbnW7EgAAAAAANiU9f7d7hEbpbFYLHr++ecVGxvriO5wGVgsFtuojd+3/y6rYTU5EQAAAAAA9nNIYUOSQkNDdf/992v37t3at2+fo7qFE3UP7y4/Dz8dPnVYq/atMjsOAAAAAAB2s3vx0I0bN5bafvToUfXu3VstW7ZUzZo1NWfOnEsOB+fydPNUv0b99N8t/9X0bdPVsV5HsyMBAAAAAGAXuwsbrVq1ksVi0blLcxR9b7FYlJyc7NCAcK6BjQfq560/a9PhTUo/nq7wwHCzIwEAAAAAUGblmoqycuVK7dy503akpaVp5cqV5QowZcoURUREyMvLS23bttWSJUsueP57772nmJgYeXt7Kzo6Wl988UW5nhdn1fSpqc71OkuSpm+bbnIaAAAAAADsU67CRoMGDRQWFlbsaNCggd39fP/993rwwQf11FNPad26deratavi4+O1e/fuUs+fOnWqnnjiCT333HP666+/9Pzzz2vs2LGaMWNGeV4G/t+Q6CGSpEXpi5SVm2VyGgAAAAAAys7u7V5dXFz0+eefq2bNmvL391d4eLjq1q2rQ4cOKTQ0VIWFhWXuq0OHDmrTpo2mTp1qa4uJidHQoUM1adKkEud37txZXbp00WuvvWZre/DBB7VmzRotXbq0TM/Jdq8lGYah8bPHK/VYqm5rcZtuanqT2ZEAAAAAAFWcU7d7HT58uAYOHKiuXbuqQYMGioiI0Ouvv25XH/n5+Vq7dq369u1brL1v375atmxZqdfk5eXJy8urWJu3t7dWrVqlM2fO2PciYGOxWGyjNmalzFKBtcDkRAAAAAAAlI3dhQ2r1Sqr1arc3Fzt27dPixcv1h133KFvvvnGrn4yMjJUWFio2rVrF2uvXbu2Dh48WOo1/fr100cffaS1a9fKMAytWbNGn3zyic6cOaOMjIxSr8nLy1N2dnaxAyVd3eBqBXoF6ujpo1q2p/TCEgAAAAAAFU25RmxIkoeHh0JCQtSlSxc99dRTmjlzpgzDkKurq0JDQ8vcj8ViKfZ90e4qpXnmmWcUHx+vjh07yt3dXddcc41GjBghSXJ1dS31mkmTJikgIMB21K9fv8zZqhJ3V3fFR8ZLYhFRAAAAAEDlUe7Cxt+1atVKVqtVhYWF2r9//0XPr1mzplxdXUuMzjh8+HCJURxFvL299cknn+jUqVNKT0/X7t27FR4eLj8/P9WsWbPUa5544gllZWXZjj179tj/4qqI+Mh4ubm4advRbdp+dLvZcQAAAAAAuKhyFTaOHz+ujz76SE888YQyMzMlScnJydq3b1+Z+/Dw8FDbtm01d+7cYu1z585V586dL3itu7u76tWrJ1dXV3333XcaNGiQXFxKfymenp7y9/cvdqB01b2rq2uDrpKkGdvYaQYAAAAAUPG52XvBxo0b1bt3bwUEBCg9PV133nmngoKC9Msvv2jXrl364osvytzX+PHjddtttyk2NladOnXStGnTtHv3bo0ZM0bS2dEW+/bts/W5fft2rVq1Sh06dNCxY8f05ptv6s8//9Tnn39u78vAeQyJHqKF6Qu1dM9SjTw9UkHeQWZHAgAAAADgvOwesTF+/HiNGDFCKSkpxXYoiY+P1+LFi+3qa9iwYZo8ebJeeOEFtWrVSosXL9asWbMUFhYmSTpw4IB2795tO7+wsFBvvPGGWrZsqT59+ig3N1fLli1TeHi4vS8D5xEZFKmYmjEqsBYoISXB7DgAAAAAAFyQxTAMw54LAgIClJycrEaNGsnPz08bNmxQw4YNtWvXLkVHRys3N9dZWR2irPvgVmVLdy/VK3+8ogDPAH1yzSfycPUwOxIAAAAAoIop6/273SM2vLy8St0yddu2bapVq5a93aEC6livo2r61FRWXpaW7FpidhwAAAAAAM7L7sLGNddcoxdeeEFnzpyRdHa71t27d+vxxx/X9ddf7/CAuPzcXNw0MGqgpLNbv9o5qAcAAAAAgMvG7sLG66+/riNHjig4OFinT59WXFycIiMj5efnp4kTJzojI0zQr1E/ebh6KO14mjYf2Wx2HAAAAAAASmX3rij+/v5aunSpFixYoOTkZFmtVrVp00a9e/d2Rj6YxM/TTz3Ce2j2jtmavm26mgY3NTsSAAAAAAAl2F3YKNKzZ0/17NnTkVlQwQxqPEizd8zW8r3LdfjkYQX7BpsdCQAAAACAYuyeiiJJ8+fP16BBg9SoUSNFRkZq0KBBmjdvnqOzwWThgeFqEdxChgzN3D7T7DgAAAAAAJRgd2Hj3XffVf/+/eXn56cHHnhA48aNk7+/vwYMGKB3333XGRlhoiHRQyRJs3fMVm5Bxd7KFwAAAABQ9VgMO7e8qFu3rp544gndd999xdrfe+89TZw4Ufv373doQEcr6z64OMtqWHX3jLt18ORBjW03Vv0j+5sdCQAAAABQBZT1/t3uERvZ2dnq37/kzW3fvn2VnZ1tb3eo4FwsLhrUeJAktn4FAAAAAFQ8dhc2hgwZol9++aVE+2+//abBgwc7JBQqlt4Ne8vLzUt7svdow6ENZscBAAAAAMDG7l1RYmJiNHHiRC1atEidOnWSJK1YsUJ//PGHHn74Yb399tu2c8eNG+e4pDCNr4evekf01u8pv2v6tulqVaeV2ZEAAAAAAJBUjjU2IiIiytaxxaK0tLRyhXIm1tgon33Z+zRm5hhJ0geDPlCoX6jJiQAAAAAAV7Ky3r/bPWJj586dlxQMlVNd/7qKDYnVmgNr9Pv233VX27vMjgQAAAAAgP1rbKDqKtr6dV7aPJ06c8rkNAAAAAAAlGPExvjx4y/4+JtvvlnuMKjYWtVppfr+9bUne4/mpc2zFToAAAAAADCL3YWNyZMnq1OnTvLw8CjxmMVicUgoVEwWi0WDGg/S1DVT9fv23zWo8SC5WBj0AwAAAAAwj92FDUn65ZdfFBwc7OgsqAR6RvTUFxu+0IETB7Rm/xq1r9ve7EgAAAAAgCqMj9thFy83L/Vt1FeSNGPbDJPTAAAAAACqOgobsNugxoNkkUXrD63X7qzdZscBAAAAAFRh5ZqKMnv2bAUEBJT62JAhLCh5pQv2DVanep20bO8yzdg2Q2PbjzU7EgAAAACgiipXYWP48OGltlssFhUWFl5SIFQOg6MHa9neZVqQvkC3t7xdfp5+ZkcCAAAAAFRBdk9FsVqt5z0oalQdTWs1VURghPIL8zV7x2yz4wAAAAAAqijW2EC5WCwWDYk+O+1oZspMFVopagEAAAAALj8KGyi3bmHdFOAZoIxTGVqxd4XZcQAAAAAAVRCFDZSbh6uH+kf2lyRN3zbd5DQAAAAAgKqIwgYuyYCoAXK1uGpzxmbtyNxhdhwAAAAAQBVDYQOXJMg7SF3qd5HEqA0AAAAAwOVXrsLGjh079PTTT+sf//iHDh8+LElKTEzUX3/95dBwqByKFhFdvHuxjuceNzcMAAAAAKBKsbuwkZSUpObNm2vlypX6+eefdeLECUnSxo0b9eyzzzo8ICq+6JrRiq4RrQJrgRJTE82OAwAAAACoQuwubDz++OOaMGGC5s6dKw8PD1t7jx49tHz5coeGQ+VRNGpjVsosFVgLTE4DAAAAAKgq7C5sbNq0Sddee22J9lq1auno0aMOCYXKp3P9zgryDtKx3GNasmuJ2XEAAAAAAFWE3YWNwMBAHThwoET7unXrVLduXYeEQuXj5uKmAZEDJEkzts+QYRgmJwIAAAAAVAV2Fzb++c9/6l//+pcOHjwoi8Uiq9WqP/74Q4888ohuv/12Z2REJdE/sr/cXdyVkpmibUe3mR0HAAAAAFAF2F3YmDhxoho0aKC6devqxIkTatKkibp166bOnTvr6aefdkZGVBIBXgGKC4uTxNavAAAAAIDLw2KUc87Ajh07tG7dOlmtVrVu3VpRUVGOzuYU2dnZCggIUFZWlvz9/c2Oc8XZeWynxiWOk4vFRR8P+Vg1fWqaHQkAAAAAUAmV9f7drbxP0KhRIzVq1Ki8l+MKFVE9Qs1qNdOfR/7UrJRZur0l05MAAAAAAM5jd2Fj/PjxF3z8zTffLHcYXBkGRw/Wn0f+VGJqom5udrM8XD0ufhEAAAAAAOVgd2Fj8uTJ8vPzU9u2bUvsfGGxWBwWDJVXx3odFewTrMOnDmtR+iL1bdTX7EgAAAAAgCuU3YuHTps2TdWqVZObm5veeustLVy40HYsWLDAGRlRybhYXDSo8SBJ0oxtbP0KAAAAAHAeuwsbd9xxh1JSUtSpUyddffXVuvPOO3Xo0CFnZEMl1qdRH3m6eio9K12bDm8yOw4AAAAA4Apld2FDknx8fPT8889r27ZtKiwsVOPGjfXCCy/o1KlTjs6HSqqaRzX1iuglia1fAQAAAADOY/d2r9Onl7xJXbdunV5//XUFBARo7969DgvnDGz3evnsydqje2fdK4ssmjZ4mupUq2N2JAAAAABAJeG07V6HDh163sdOnjxpb3e4gtUPqK/WdVpr3cF1+n3777qjzR1mRwIAAAAAXGHsnopitVoveADnGhI9RJI0N22ucgtyTU4DAAAAALjSlGuNDaCs2oa0VV2/ujp15pTmp803Ow4AAAAA4Apj91SUt99++4KPjxs3rtxhcOWxWCwa1HiQPlj7gWZsn6EBUQNksVjMjgUAAAAAuELYvXhoRESE7es9e/YoJCREbm5n6yMWi0VpaWmOTehgLB56+Z0+c1ojfhuhU2dO6bm459Q2tK3ZkQAAAAAAFZzTFg/duXOn7Ws/Pz8lJSWpYcOG5UuJKsHb3Vt9GvbRb9t+0/Rt0ylsAAAAAAAchjU2cFkMajxIFlmUfDBZe7Mr9pbAAAAAAIDKw/TCxpQpUxQRESEvLy+1bdtWS5YsueD5X3/9tVq2bCkfHx+FhIRo5MiROnr06GVKi/KqU62O2tdtL0masW2GyWkAAAAAAFcKuwsbGzdutB2GYWjr1q3F2uzx/fff68EHH9RTTz2ldevWqWvXroqPj9fu3btLPX/p0qW6/fbbNXr0aP3111/68ccftXr1at1xxx32vgyYoGjr1wXpC3Qy/6TJaQAAAAAAVwK7Fw91cXGRxWLRuZcVfW+xWFRYWFjmvjp06KA2bdpo6tSptraYmBgNHTpUkyZNKnH+66+/rqlTp2rHjh22tnfeeUevvvqq9uzZU6bnZPFQ8xiGofsT7teurF0a1WqUro251uxIAAAAAIAKqqz373aP2Ni5c6fS0tK0c+dO21H0vT07ouTn52vt2rXq27dvsfa+fftq2bJlpV7TuXNn7d27V7NmzZJhGDp06JD++9//auDAged9nry8PGVnZxc7YA6LxaLBjQdLkn7f/rushtXkRAAAAACAys7uXVHCwsIc8sQZGRkqLCxU7dq1i7XXrl1bBw8eLPWazp076+uvv9awYcOUm5urgoICDRkyRO+88855n2fSpEl6/vnnHZIZl657eHd9vuFzHT51WKv2rVLHeh3NjgQAAAAAqMTKvXjo5s2blZiYqOnTpxc77GWxWIp9XzSl5XzPOW7cOP373//W2rVrlZiYqJ07d2rMmDHn7f+JJ55QVlaW7SjrlBU4h6ebp/o16idJmr7N/t8XAAAAAADOZfeIjbS0NF177bXatGlTsbU2iooRZV1jo2bNmnJ1dS0xOuPw4cMlRnEUmTRpkrp06aJHH31UktSiRQv5+vqqa9eumjBhgkJCQkpc4+npKU9PzzK/PjjfwMYD9fPWn7Xp8CalH09XeGC42ZEAAAAAAJWU3SM2HnjgAUVEROjQoUPy8fHRX3/9pcWLFys2NlaLFi0qcz8eHh5q27at5s6dW6x97ty56ty5c6nXnDp1Si4uxSO7urpKkuxcAxUmqulTU53rnX2PGbUBAAAAALgUdhc2li9frhdeeEG1atWSi4uLXFxcdPXVV2vSpEkaN26cXX2NHz9eH330kT755BNt2bJFDz30kHbv3m2bWvLEE0/o9ttvt50/ePBg/fzzz5o6darS0tL0xx9/aNy4cWrfvr1CQ0PtfSkwUdHWr4vSFykrN8vkNAAAAACAysruqSiFhYWqVq2apLPTSfbv36/o6GiFhYVp27ZtdvU1bNgwHT16VC+88IIOHDigZs2aadasWbYFSg8cOKDdu3fbzh8xYoRycnL07rvv6uGHH1ZgYKB69uypV155xd6XAZNdVfMqRVaPVOqxVM3eMVs3Nb3J7EgAAAAAgErIYtg5h6Nr1656+OGHNXToUP3zn//UsWPH9PTTT2vatGlau3at/vzzT2dldYiy7oML51u4c6HeXPGmanjX0EdDPpKbi911NgAAAADAFaqs9+92T0V5+umnZbVaJUkTJkzQrl271LVrV82aNUtvv/12+ROjyrm6wdUK9ArU0dNHtWzPMrPjAAAAAAAqIbtHbJQmMzNT1atXP+82rRUJIzYqlm83fatv/vxG0TWi9Xrf182OAwAAAACoIJw2YqM0FoulUhQ1UPH0j+wvNxc3bTu6TduPbjc7DgAAAACgkrG7sJGWlqZ//OMfGjt2rDIzM9WzZ0/VrFlTISEhWr16tTMy4gpW3bu6ujboKkmasW2GyWkAAAAAAJWN3YWNMWPGaMuWLdq4caN69eqlgIAALV68WD169NAjjzzijIy4whVt/bp0z1Jlns40OQ0AAAAAoDKxexuKlStXasmSJQoLC1NQUJA+/fRTtWrVSrVq1VK7du2ckRFXuMigSMXUjNGWjC1KSEnQLS1uMTsSAAAAAKCSsHvERk5OjkJCQhQQECAfHx/bAh4BAQE6ceKEwwOiaigatZGQmqD8wnyT0wAAAAAAKgu7R2xIUmJiogICAmS1WjV//nz9+eefOn78uIOjoSrpVK+TavrUVMapDC3ZtUS9GvYyOxIAAAAAoBKwe7tXF5fzD/KwWCwqLCy85FDOxHavFdd/N/9Xn2/4XA0DG2py/8nstAMAAAAAVZjTtnu1Wq3nPSp6UQMVW79G/eTh6qG042nafGSz2XEAAAAAAJWA3YUNwFn8PP3UI7yHJGn6tukmpwEAAAAAVAblKmwkJSVp8ODBioyMVFRUlIYMGaIlS5Y4OhuqoMGNB0uSlu9drsMnD5ucBgAAAABQ0dld2Pjqq6/Uu3dv+fj4aNy4cbrvvvvk7e2tXr166ZtvvnFGRlQhYYFhalm7pQwZmrl9ptlxAAAAAAAVnN2Lh8bExOiuu+7SQw89VKz9zTff1IcffqgtW7Y4NKCjsXhoxbdy70pNWDJBvu6++mzoZ/Jy8zI7EgAAAADgMnPa4qFpaWkaPHhwifYhQ4Zo586d9nYHlNCubjvV8a2jk2dOalH6IrPjAAAAAAAqMLsLG/Xr19f8+fNLtM+fP1/169d3SChUbS4WFw1qPEjS2UVE7RxUBAAAAACoQtzsveDhhx/WuHHjtH79enXu3FkWi0VLly7VZ599prfeessZGVEF9W7YW19t+kp7svdow6ENalWnldmRAAAAAAAVkN2FjXvuuUd16tTRG2+8oR9++EHS2XU3vv/+e11zzTUOD4iqydfDV30a9tGM7TM0fdt0ChsAAAAAgFLZvXhoZcfioZXHvux9GjNzjCTpg0EfKNQv1OREAAAAAIDLxWmLh0rSnj17bAuFHj16VD///LNSUlLKlxQ4j7r+dRUbEitJ+n377yanAQAAAABURHYXNr766iuFh4crKipKX3zxhVq1aqU77rhDTZs21fTp052REVXYkOghkqR5afN06swpk9MAAAAAACoauwsbkyZN0n/+8x/NmjVL9957r+644w5lZmbqscce08SJE52REVVYqzqtVN+/vk4XnNa8tHlmxwEAAAAAVDB2FzZ27Niha6+9Vn379lVBQYFuvPFGSdLw4cO1detWhwdE1WaxWDS48WBJZ6ejWA2ryYkAAAAAABWJ3YUNX19fnTp1dkpAz549Vb169bMdubjIYrE4Nh0gqUdED/m6++rAiQNas3+N2XEAAAAAABWI3YWNVq1aafPmzZKkWbNmKSQkRJKUnJysJk2aODYdIMnLzUt9G/WVJM3YNsPkNAAAAACAisRh272mp6eroKBAkZGRjujOadjutXI6fPKw7ph+hwwZem/Ae2oQ0MDsSAAAAAAAJ3Lqdq+lCQ8Pr/BFDVRewb7B6lSvkyRGbQAAAAAA/ueSChvp6emKi4uTv7+/rr76au3YscNRuYASBkefXUR0QfoC5eTlmJwGAAAAAFARXFJh45FHHlFBQYGmTp2qwMBA3X///Y7KBZTQtFZTNQxsqPzCfM3eMdvsOAAAAACACuCSChsrV67Um2++qVtuuUVTp07VihUrHJULKMFisdhGbcxMmalCa6HJiQAAAAAAZrukwsbx48dVq1YtSVJwcLCysrIcEgo4n25h3RTgGaCMUxlasZdCGgAAAABUdW72XrBx40bb14ZhaOvWrTpx4oTy8vIcGgwojYerh/pH9tf3f32v6dumq0uDLmZHAgAAAACYyO7CRqtWrWSxWFS0S+ygQYNs31ssFocHBP5uQNQA/Xfzf7U5Y7N2ZO5Qo6BGZkcCAAAAAJjE7sLGzp07nZEDKLMg7yBd3eBqJe1K0vRt0/VQp4fMjgQAAAAAMIndhY2wsDBn5ADsMrjxYCXtStLi3Ys1svVIBXoFmh0JAAAAAGACuwsbb7/99gUfHzduXLnDAGUVXTNa0TWite3oNiWmJurmZjebHQkAAAAAYAKLUbRYRhm5uLioXr16cnV1LdmZxaK0tDSHhXOG7OxsBQQEKCsrS/7+/mbHwSVYvGuxXlv2mqp7Vdcn13wiNxe763QAAAAAgAqqrPfv5boTXLNmjYKDg8sdDnCEzvU7K8g7SJmnM7Vk1xL1iOhhdiQAAAAAwGXmYu8FFouF3U9QIbi5uGlg1EBJ0oztM2Tn4CMAAAAAwBXA7hEbhmHomWeeUUBAgHx9fRUaGqrWrVurbdu2zsgHXFC/Rv303Z/fKSUzRVsztiqmVozZkQAAAAAAl5HdhY1u3bpp69atOnPmjLKzs3XgwAFlZmaqZcuWmjlzpkJDQ52REyhVgFeA4sLiNG/nPM3YPoPCBgAAAABUMXZPRVm0aJEWLVqkP/74Q5s2bVJGRoZSUlLk4+Ojhx9+2BkZgQsaEj1EkvTHnj+UcSrD5DQAAAAAgMvJ7sJGaRo1aqS33npL+/btc0R3gF0iqkeoWa1mshpWzUqZZXYcAAAAAMBl5JDChiTFxsZq8eLFjuoOsEvRqI3E1ETlF+abnAYAAAAAcLmUq7CxY8cO3X///erdu7f69OmjcePGKS0tzdHZgDLrUK+Dgn2ClZOfo0Xpi8yOAwAAAAC4TOwubMyePVtNmjTRqlWr1KJFCzVr1kwrV65UkyZNNHfuXGdkBC7KxeKiQY0HSZJmbGPrVwAAAACoKiyGnXeArVu3Vr9+/fTyyy8Xa3/88cc1Z84cJScnOzSgo2VnZysgIEBZWVny9/c3Ow4c6ET+CY34dYTyCvM0sedEtajdwuxIAAAAAIByKuv9u90jNrZs2aLRo0eXaB81apQ2b95sb3eAw1TzqKZeEb0kSdO3TTc5DQAAAADgcrC7sFGrVi2tX7++RPv69esVHBzsiExAuQ2OHixJWrVvlQ6eOGhyGgAAAACAs9ld2Ljzzjt111136ZVXXtGSJUu0dOlSvfzyy7r77rt111132R1gypQpioiIkJeXl9q2baslS5ac99wRI0bIYrGUOJo2bWr38+LKVM+/ntrUaSNDhn7f/rvZcQAAAAAATmb3GhuGYWjy5Ml64403tH//fklSaGioHn30UY0bN04Wi6XMfX3//fe67bbbNGXKFHXp0kUffPCBPvroI23evFkNGjQocX5WVpZOnz5t+76goEAtW7bU/fffr+eee65Mz8kaG1e+NfvX6Pmk5+Xj7qPPh34uLzcvsyMBAAAAAOxU1vt3uwsb58rJyZEk+fn5lev6Dh06qE2bNpo6daqtLSYmRkOHDtWkSZMuev2vv/6q6667Tjt37lRYWFiZnpPCxpXPMAzdM/Me7cvZpzFtx2hg44FmRwIAAAAA2Mlpi4eey8/Pr9xFjfz8fK1du1Z9+/Yt1t63b18tW7asTH18/PHH6t279wWLGnl5ecrOzi524MpmsVj+t/XrdrZ+BQAAAIArmZu9F7Rp0+aCj5d1u9eMjAwVFhaqdu3axdpr166tgwcvvujjgQMHlJCQoG+++eaC502aNEnPP/98mTLhytErope+3Pil9uXsU/KBZLUNbWt2JAAAAACAE9hd2Fi/fr0efvhhVatWzSEB/r4mh2EYZVqn47PPPlNgYKCGDh16wfOeeOIJjR8/3vZ9dna26tevX66sqDy83b3Vp2Ef/bbtN03fNp3CBgAAAABcoewubEjSo48+eslbu9asWVOurq4lRmccPny4xCiOvzMMQ5988oluu+02eXh4XPBcT09PeXp6XlJWVE6DGg/S9G3TlXwwWXuz96qefz2zIwEAAAAAHOyS1ti4FB4eHmrbtq3mzp1brH3u3Lnq3LnzBa9NSkpSamqqRo8e7cyIqOTqVKuj9nXbS5JmbJthchoAAAAAgDOUq7Bhz5auFzJ+/Hh99NFH+uSTT7RlyxY99NBD2r17t8aMGSPp7DSS22+/vcR1H3/8sTp06KBmzZo5JAeuXEOih0iSFqQv0Mn8kyanAQAAAAA4WrmmojzzzDPy8fEp9bE333yzzP0MGzZMR48e1QsvvKADBw6oWbNmmjVrlm2XkwMHDmj37t3FrsnKytJPP/2kt956qzzRUcU0D26usIAw7crapTk75ujamGvNjgQAAAAAcCCLYedemN27dz/viA2LxaIFCxY4JJizlHUfXFw55uyYo3dWvaNgn2B9OORDuVhMm4EFAAAAACijst6/2z1iY9GiRZeSC7js4sLi9Nn6z3T41GGt3LtSnep3MjsSAAAAAMBB7P7oOisrS5mZmSXaMzMzlZ2d7ZBQgCN5unmqX6N+kqQZ21lEFAAAAACuJHYXNm6++WZ99913Jdp/+OEH3XzzzQ4JBTjawMYD5WJx0abDm5R+PN3sOAAAAAAAB7G7sLFy5Ur16NGjRHv37t21cuVKh4QCHK2mT011rnd2G+Hp26abnAYAAAAA4Ch2Fzby8vJUUFBQov3MmTM6ffq0Q0IBzlC09eui9EXKys0yOQ0AAAAAwBHsLmy0a9dO06ZNK9H+/vvvq23btg4JBTjDVTWvUlRQlM5Yz2j2jtlmxwEAAAAAOIDdu6JMnDhRvXv31oYNG9SrVy9J0vz587V69WrNmTPH4QEBR7FYLBrceLDeXPGmZqbM1HUx18nNxe4/AgAAAACACsTuERtdunTR8uXLVb9+ff3www+aMWOGIiMjtXHjRnXt2tUZGQGHubrB1Qr0ClTm6Uwt27PM7DgAAAAAgEtUro+rW7Vqpa+//trRWQCnc3d114DIAfrmz280fdt0dQvrZnYkAAAAAMAlsHvERnZ29gUPoKKLj4qXm4ubth3dpu1Ht5sdBwAAAABwCewubFSvXr3UIzAwUNWrV3dGRsChAr0C1a3B2ZEabP0KAAAAAJWb3VNRwsPDdeTIET3++OPq0qWLMzIBTjc4erAWpC/Q0t1LNar1KAV5B5kdCQAAAABQDnYXNrZu3ap33nlHEydO1Lp16/Tqq68qIiLCGdkAp4kMilRMzRhtydiihJQE3dLiFrMjAQAAAADKwe6pKO7u7ho/frxSUlJUt25dtWjRQg8//LCOHz/uhHiA8wyJHiJJSkhNUH5hvslpAAAAAADlYXdho0hQUJAmT56sdevWKT09XZGRkZo8ebIDowHO1aleJ9X0qamsvCwt2bXE7DgAAAAAgHKwGIZh2HNB69atZbFYirUZhqHU1FSdOnVKhYWFDg3oaNnZ2QoICFBWVpb8/f3NjgOT/Xfzf/X5hs/VMLChJvefXOJ3GwAAAABgjrLev9u9xsbQoUMvJRdQofRr1E/f/vmt0o6nafORzWoa3NTsSAAAAAAAO9hd2Hj22WedkQMwhZ+nn3qE99DsHbM1fdt0ChsAAAAAUMmUe40N4EoxuPFgSdLyvct1+ORhk9MAAAAAAOxBYQNVXlhgmFrWbilDhmZun2l2HAAAAACAHShsAPrf1q+zd8xWbkGuyWkAAAAAAGVFYQOQFBsaqzq+dXTyzEktSl9kdhwAAAAAQBlR2AAkuVhcNKjxIEnS9G3TZecuyAAAAAAAk9hd2Dh27JieeOIJvfbaazpz5oxGjRqlgIAAdezYUampqc7ICFwWvRv2lpebl/Zk79GGQxvMjgMAAAAAKAO7Cxt33HGHvvrqK3344Yfq37+/tm/frilTpsjPz0/jxo1zRkbgsvD18FWfhn0knR21AQAAAACo+NzsvWDRokWaNWuWwsLCFBoaquXLl6tDhw5q2bKlunXr5oyMwGUzqPEg/b79d63ev1r7c/Yr1C/U7EgAAAAAgAso11SUiIgI1alTR76+vqpVq5YkqVatWsrKynJ4QOByCvULVWxorCTp9+2/m5wGAAAAAHAx5Vo8dPPmzdq4caMMw9DWrVu1ceNG/fXXX47OBphicOPBkqR5afN06swpk9MAAAAAAC7E7qkoktSrVy/brhGDBg2SxWKRYRiyWCwODQeYoVWdVqrvX197svdoXto8DYkeYnYkAAAAAMB52F3Y2LlzpzNyABWGxWLR4MaDNWXNFP2+/XcNajxILhZ2RgYAAACAisjuwkZYWJgzcgAVSo+IHvp8w+c6cOKA1uxfo/Z125sdCQAAAABQCj6GBkrh5ealfo36SWLrVwAAAACoyChsAOcxsPFAWWTRhkMbtDtrt9lxAAAAcA6rYdWerD3KLcg1OwpQoeUW5GrOjjl67Y/XbGtlXmnKtXgoUBUE+warU71OWrZ3mWZsm6Gx7ceaHQkAAACSth/drqmrpyr1WKp83H3UI7yH+kf2V3hguNnRgApj1/FdSkhN0ML0hbbdHgc2HqgmtZqYnMzxKGwAFzA4erCW7V2mBekLdHvL2+Xn6Wd2JAAAgCorJy9Hn2/4XHN2zJEhQxZZdOrMKc1MmamZKTMVUzNG/SP76+oGV8vD1cPsuMBll1+Yr2V7lmlWyixtydhiaw+pFqL4yHjV969vYjrnsbuwkZ2dfcHH/f39yx0GqGia1mqqhoENlXY8TbN3zNYNTW4wOxIAAECVYxiG5qbN1WfrP1NOfo4kqWd4T41oNUK7s3YrITVBK/au0JaMLdqSsUUfJn+oXhG91D+yv+r51zM5PeB8+3P2KzE1UfPS5tn+jLhYXNSxbkfFR8WrZe2WslgsJqd0Hoth5yQbFxeXUn8ghmHIYrGosLDQYeGcITs7WwEBAcrKyqIIgzKZnzZfk1dOVk2fmvpo8EdydXE1OxIAAECVsSNzh6aumaptR7dJksICwnRP7D1qGty02HnHTh/T3LS5mp06W4dPHba1N6vVTPFR8epUr5PcXd0va3bAmQqsBVq1b5USUhK0/tB6W3tNn5rq36i/+jTqoyDvIPMCOkBZ79/LVdj46aefFBQUJMMwNGDAAH300UeqW7euJCkuLu7SkjsZhQ3YK78wX6N+G6WsvCw93uVxdWnQxexIAAAAV7yT+Sf15cYvNStllgwZ8nbz1i3Nb9HAxgPl5nL+gedWw6p1B9YpITVBq/atkqGztzv+nv7qHdFb/SP7K8Qv5HK9DMDhjpw8otk7ZmvOjjk6lntMkmSRRW1D2io+Kl6xobFysVwZ+4Q4tbBx8OBBBQcHS5L8/Py0evVqXXXVVZeW+DKhsIHy+GrjV/r+r+/VpGYTvdLnFbPjAAAAXLEMw9DC9IX6ZN0nysrLkiR1a9BNo9uMtvvT54xTGZq7Y67mpM1RxqkMW3ur2q3UP7K/OtTrcMEiCVBRWA2rkg8kKyElQav3r7YV7AK9AtW3YV/1i+ynYN9gk1M6ntMKGzVr1tScOXPUpk0bHT9+XDVq1FBERIR++ukntWzZ8pKDOxuFDZRH5ulMjfptlAqNQk3uN1mNghqZHQkAAOCKk348XVNXT9XmjM2SpHp+9XRPu3vUonaLS+q30FqoNfvXKDE1UWsPrK0yN4Wo/M43xapFcAvFR8WrY72OV3RxzmmFjeuuu06pqan65z//qVmzZikvL08jR47U448/rsmTJ2vEiBGXmt2pKGygvF5f9rqSdiWpZ3hPPdTpIbPjAAAAXDFOnTmlbzZ9oxnbZ8hqWOXp6qmbm92soVcNdfhN2+GThzU7dbbmps0tNoy/TUgbxUeeHcbPmmowk2EY2nR4kxJSErR873IVGmfXsazmUc02naquf12TU14eTitsHDx4UOPHj9eGDRsUERGh//znP4qKitLKlSt10003adeuXZcc3pkobKC8th/drofnPCw3Fzd9es2nCvQKNDsSAABApWYYhpbsXqKP132szNOZkqTO9TrrzrZ3qqZPTac+9/kWXqzhXUN9G/VV30Z9nZ4BOFdOXo4W7FyghNQE7cvZZ2u/qsZVio+Kr5LbGDutsHEhGRkZqlmzYv/hp7CBS/HInEe07eg23dL8Ft3c7Gaz4wAAAFRae7L26P0172vj4Y2SpJBqIRoTO0ZtQtpc9iwHcg5o9o7Zmpc2z7auh0UWta/bXv0j+6tNSJsrZjFGVCyGYWjb0W1KSEnQkt1LdMZ6RpLk5ealnuE91T+yvyKqR5ic0jymFDYqAwobuBSLdy3Wa8teU3Wv6vrkmk+u6PlsAAAAzpBbkKvv/vxOv279VYVGoTxcPXRTk5t0bcy1pn8afabwjJbvXa7E1ERtOrzJ1h7sE6x+kf3Uu2HvSr99JiqGU2dOaVH6IiWkJCg9K93W3jCwoeKj4hUXFidvd2/zAlYQTitsjB8//oKPv/nmm/Z0d9lR2MClKLAWaPT00co8nanxHcerR0QPsyMBAABUCoZhaPne5fow+UPbDiUd6nbQnW3uVO1qtU1OV9Le7L1KTE3U/J3zdSL/hCTJ1eKqDnU7KD4qXi1rt5TFYjE5JSqbtGNpSkhJ0KJdi5RbkCtJ8nD1ULcG3RQfFa+ooCh+r87h1O1e/fz81LZtW/39UovFogULFpQv8WVCYQOX6oe/ftCXG79UVFCU3uj7Bn/xAAAAXMT+nP36YM0HSj6YLOnsCIgxsWPUrm47k5NdXH5hvv7Y/YcSUhO0JWOLrT2kWoj6NTo7iiPAK8DEhKjo8grytHT3UiWkJmjb0W229np+9RQfFa+eET1VzaOaiQkrLqcVNj766CM9++yzatq0qV5//XW1aHFpWy9dbhQ2cKmycrM08reROmM9o1d7v6qYWjFmRwIAAKiQ8gry9OPmH/XTlp9UYC2Qm4ubboi5QTc2vdH0aSflsev4LiWmJmpB+gKdOnNKkuTm4qbO9Tqrf2R/NQtuxodesNmTtcc26ufkmZOS/vf7Eh8Vr6a1mvL7chFOXWPj1KlTeuWVV/Sf//xHw4YN04QJE1S7dsUbPlYaChtwhLdXvq25aXPVtUFXPdblMbPjAAAAVDir9q3SB2s+0OFThyVJbUPa6u62dyvEL8TkZJcutyBXS3YtUUJqglIyU2ztdf3qKj7y7Cfwfp5+JiaEWYrWaUlISdCfR/60tdf2ra3+kf3Vp2EfRvjY4bIsHnrgwAE99dRT+umnn/Twww/rkUcekY+PT3m7uywobMARdh7bqXGJ4+RicdHHQz5mKzAAAID/d+jEIX2w9gOt3r9aklTTp6bubHOnOtXrdEV+Ol3amgnuLu66usHVio+M11U1r7oiXzeKO3jioGanztbctLnFdtYpWpOldZ3W/B6Ug9MKG9OnTy/Rtm7dOr3++usKCAjQ3r177Qo6ZcoUvfbaazpw4ICaNm2qyZMnq2vXruc9Py8vTy+88IK++uorHTx4UPXq1dNTTz2lUaNGlen5KGzAUZ6Y94T+PPKnbmxyo25vebvZcQAAAEyVX5ivn7f8rB83/6j8wny5Wlx17VXXalizYfJy8zI7ntOdPnNaSbuSlJCSoLTjabb2sIAw9Y/srx7hPeTr4WtiQjhaobVQa/avUUJqgpIPJMvQ2VvrIO8g9WvUT30b9eUD0Evk1MVDL8RqtZa5r++//1633XabpkyZoi5duuiDDz7QRx99pM2bN6tBgwalXnPNNdfo0KFDmjBhgiIjI3X48GEVFBSoc+fOZXpOChtwlOV7luulpS/JIota1m6puPA4darXiX+wAABAlbN2/1p9sPYDHThxQJLUIriFxsSOUf2A+iYnu/wMw1BKZooSUxOVtCtJ+YX5kiRPV091C+um/pH92fmikjt66qjm7Jij2Ttm6+jpo7b2NnXaKD4qXu1C28nVxdXEhFeOyzIV5VJ16NBBbdq00dSpU21tMTExGjp0qCZNmlTi/MTERN18881KS0tTUFD59o+msAFHsRpWvfbHa1q6Z6mtzd3FXe1C2ykuPE6xobGVclEsAACAsjpy8og+Sv5Iy/Yuk3T2k+rRrUera4Ou3LhLOpl/UgvTFyohJUG7s3fb2hsGNlR8VLziwuLk7e5tYkKUlWEYWndwnRJSErRq/ypZjbMf6Ad4BqhPwz7q26jvFbF+TEVT4Qsb+fn58vHx0Y8//qhrr73W1v7AAw9o/fr1SkpKKnHNvffeq+3btys2NlZffvmlfH19NWTIEL344ovy9i79L4S8vDzl5eXZvs/Ozlb9+vUpbMBhDp44qMW7FmtR+iLtyd5ja/d191Xn+p0VFxan5rWby8Vy4dFOAAAAlUWBtUC/bv1V3/35nfIK8+RicdGQxkP0j+b/kI97xV5zzwyGYWhrxlYlpCZo6e6lOmM9I0nycvNS97Duio+KV8PqDU1OidJk5WZpXto8JaYm6uDJg7b2ZrWaKT4qXp3qdZK7q7uJCa9sZS1suNnb8bhx4xQZGalx48YVa3/33XeVmpqqyZMnl6mfjIwMFRYWlthNpXbt2jp48GCp16SlpWnp0qXy8vLSL7/8ooyMDN17773KzMzUJ598Uuo1kyZN0vPPP1+mTEB51KlWRzc1vUk3NrlR6cfTtSh9kRbvXqyMUxmamzZXc9PmKsg7SF0bdFVcWJwigyL5BAMAAFRaGw5u0NQ1U7UvZ58kqWmtphoTO0bhgeHmBqvALBaLYmrFKKZWjO5sc6cW7FyghNQE7cvZp8QdiUrckajGQY3VP7K/uoZ1rRJrklRkhmHoryN/KSElQcv2LlOBtUDS2Q8ue0b0VHxkfJWcZlWR2T1io27dupo+fbratm1brD05OVlDhgwp8+Kh+/fvV926dbVs2TJ16tTJ1j5x4kR9+eWX2rp1a4lr+vbtqyVLlujgwYMKCDi7Rc7PP/+sG264QSdPnix11AYjNmCGor8Mk9KT9MeeP5STn2N7rK5fXcWFxSkuPE6hfqEmpgQAACi7o6eO6uN1H2vJ7iWSzg7BH916tLqHd+dDm3IwDEN/Hv5TCakJWr53ebGb5x7hPdQ/sr/CAsNMTlm1nMw/aSs6nTsSu3FQY8VHxatrg67ydPM0MWHV47QRG0ePHrUVFc7l7++vjIyMMvdTs2ZNubq6lhidcfjw4RKjOIqEhISobt26xZ4/JiZGhmFo7969ioqKKnGNp6enPD355cPlZbFY1Cy4mZoFN9PdsXcr+UCyktKTtGLfCu3L2adv/vxG3/z5jaKCohQXFqeuYV0V5F2+dWMAAACcqcBaoN+3/66vN32t3IJcWWTRwKiBurXFrSyafgksFoua126u5rWbKys3S3PT5mp26mwdPHlQv6f8rt9TfldMzRjFR8arS4MurN3mJEWLvSakJGjx7sW2xV6Lpgn1j+yvRkGNTE6Ji7G7sBEZGanExETdd999xdoTEhLUsGHZ54V5eHiobdu2mjt3brE1NubOnatrrrmm1Gu6dOmiH3/8USdOnFC1atUkSdu3b5eLi4vq1atn70sBLgs3Fze1r9te7eu21+kzp7Vi7wol7UrSuoPrlJKZopTMFH287mO1qN1C3cO7s7MKAACoMP48/KfeX/O+dmXtkiRF14jWve3uZT0IBwvwCtANTW7Q9THXa8OhDUpISdCKfSu0JWOLtmRs0YfJH9qmQNT1r2t23CtCbkGuktKTlJCaoB3HdtjawwPCFR8Vr+7h3VkvphKxeyrKJ598ovvuu0+PPvqoevbsKUmaP3++3njjDU2ePFl33nlnmfsq2u71/fffV6dOnTRt2jR9+OGH+uuvvxQWFqYnnnhC+/bt0xdffCFJOnHihGJiYtSxY0c9//zzysjI0B133KG4uDh9+OGHZXpOdkVBRZGVm6Wlu5cqaVeStmRssbWzswoAADDb8dzj+mTdJ1qYvlCS5Ofhp5GtRqp3w95MO7lMMk9n2hatPHLqiK29eXBz9Y/sz6KV5ZR+PF0JKQlamL5QpwtOSzr7/99XN7ha8ZHxuqrmVfyOVyBO3RVl6tSpmjhxovbv3y9JCg8P13PPPafbb7/d7qBTpkzRq6++qgMHDqhZs2b6z3/+o27dukmSRowYofT0dC1atMh2/tatW3X//ffrjz/+UI0aNXTTTTdpwoQJ590V5e8obKAiOnTikJJ2JZXYWcXH3Ued63VWXHicWtRuwc4qAADAqQqthZqVMktfbfpKp86ckkUW9WvUT7e3vF1+nn5mx6uSrIZVa/evVWJqolbvXy1DZ2/fAjwD1Lthb/Vr1I9tRi8ivzBff+z+QwmpCcU+UAytFqr4qHj1iujF73cFdVm2ez1y5Ii8vb1t00IqAwobqMgMw1D68XQl7UpS0q4kZZz637o11b2qq1tYN3ZWAQAATrE1Y6umrp6qtONpkqTI6pG6p909alyjscnJUCTjVIZmp87WnLQ5yjydaWtvVbuV4qPi1b5ue7m52L3awBVrX/Y+zd4xW/PS5tkW83e1uKpTvU6Kj4pX8+Dm/D91Bef0wsbhw4e1bds2WSwWRUdHq1atWuUOezlR2EBlYRiGNh/ZrEXpi0rsrBJaLVRx4XGKC4tjniUAALgkWblZ+nzD55qbNlfS2V05bm95u/pH9me0aAVVaC3Umv1rlJCaoOQDybZRHNW9qqtPwz7qF9lPwb7BJqc0R4G1QCv3rlRCaoI2HNpga6/lU0v9I/urT8M+qu5d3cSEsIfTChvZ2dkaO3asvv32W1mtVkmSq6urhg0bpvfee6/UHVMqEgobqIwKrAXFdlYpWq1ZEjurAACAcrEaVs3ZMUefb/hcJ/JPSJJ6R/TWiFYjFOBVsf+fHv9z6MQhzd4xW3PT5up47nFJkkUWtQ1pq/6R/RUbGitXF1dzQ14Gh08e1uzUsz+HY7nHJJ39OcSGxio+Ml5tQ9tSqKuEnFbYuOmmm7R+/Xq988476tSpkywWi5YtW6YHHnhALVq00A8//HDJ4Z2JwgYqu9yCXK3Yu0KL0hdp3cF1shpnC4wWWdQ8uLm6h3dX5/qd2VkFAACcV8rRFE1dM1UpmSmSpIjACN0Te49iasWYnAzlVWAt0Iq9K5SYmlhspEJNn5rq27Cv+jbqqxo+NUxM6HhF648kpCZozf41xUau9G109jVX1ZErVwqnFTZ8fX01e/ZsXX311cXalyxZov79++vkyZPlS3yZUNjAlSQrN0t/7PlDi9IXsbMKAAC4qJy8HH258UslpibKkCEfdx/d2vxWDYgaUCU+1a8q9ufsV2JqYrG1JVwsLmoX2k7xkfFqE9KmUq8tcb4dY1hr5MrjtMJGgwYNNHPmTDVv3rxY+8aNGzVgwADt3bu3fIkvEwobuFIdOnFIi3ct1qL0RdqdvdvW7uPuo071Oql7eHd2VgEAoIoyDEPzd87Xp+s/VXZetiSpR3gPjWg1gqmsV7D8wnwt37NciamJ+vPIn7b2YJ9g9YvsV6nWmzAMQxsPbVRCaoJW7F2hQqNQ0tmtiHs37K3+kf0V6hdqcko4mtMKG9OmTdOPP/6oL774QiEhZ7cVOnjwoIYPH67rrrtOd99996UldzIKG7jSGYahXVm7lJSepEW7FpXYWaVrg67qHt6dnVUAAKgi0o6l6f0179tGd9b3r697292rZsHNTE6Gy2lP1h4lpiZq/s75Onnm7Ch7V4urOtbrqPjIeLWo3aJC/r9hTl6ObXTG/hP7be0xNWMUHxmvLg26MDr5Cua0wkbr1q2VmpqqvLw8NWjQQJK0e/dueXp6Kioqqti5ycnJ5YjuXBQ2UJUU7ayStCtJS3cvLbazSki1EMWFxal7eHd2VgEA4Ap0Mv+kvt70tX7f/rsMGfJy89I/m/1Tg6MHM0y/CssvzNeSXUuUmJqorUe32tpDqoUoPjJevRr2kr+nufdJhmFoa8ZWJaQmaOnupTpjPSNJ8nbzVs+Inuof2V/hgeGmZsTl4bTCxvPPP1/mc5999ll7ur4sKGygqiqwFmjdgXValL5IK/etVF5hnu2xyOqRiguPU9cGXa+4RaUAAKhqDMPQovRF+mT9J7ZdMq6uf7VGtxmtmj41zQ2HCiX9eLoSUhK0MH2hThecliS5ubipc73Oio+KV9NaTS/rKI5TZ05pUfoiJaQkKD0r3dbeqHojDYgaoG5h3eTl5nXZ8sB8TitsVHYUNoD/7aySlJ6k5IPJ7KwCAMAVYnfWbk1dPdW2nkJdv7oaEztGreq0MjcYKrTcglwt3rVYiamJtp1ypLPTlvpH9lfPiJ6q5lHNac+/I3OHElITlLQrSbkFuZIkD1cPxYXFKT4yXlE1oi7SA65UTi1sHD9+XP/973+1Y8cOPfroowoKClJycrJq166tunUr9pB2ChtAcefbWcXNxe3sziphcWpXtx1zFwEAqMBOnzmtb//8VtO3TVehUSgPVw8NazpM1151rdxd3c2Oh0okNTNViamJJYoMV9e/WvFR8YquEe2QURx5BXlavGuxElITShRT4iPj1TOiJx+ywXmFjY0bN6p3794KCAhQenq6tm3bpoYNG+qZZ57Rrl279MUXX1xyeGeisAGc3+GTh88uOnqBnVWaBzdnOzgAACoIwzD0x54/9GHyh8o8nSlJ6li3o+5se6eCfYNNTofK7HzTQsIDwhUfFa+4sLhyFR72ZO1RQmqCFuxcYFvE1M3FTV3qd1F8ZLya1GpSIRcxhTmcVtjo3bu32rRpo1dffVV+fn7asGGDGjZsqGXLlumf//yn0tPTLzW7U1HYAMom/Xi6ktKTlLQrqdj+4IFegerWoJviwuMUFRTFPzwAAJhkX/Y+vb/mfa0/tF7S2cUf72p7l2JDY80NhiuKYRjafnS7ElITtGT3EuUX5kuSPF09FRcWp/6R/S86VeRM4Rkt37tcCSkJxbadDakWov6R/dUropcCvAKc+jpQOTmtsBEQEKDk5GQ1atSoWGFj165dio6OVm5u7iWHdyYKG4B9DMPQlowtWpS+iJ1VAACoAHILcvXDXz/ol62/qMBaIHcXd93Y5EZd3+R6po7CqU7kn9DCnQuVkJqgPdl7bO2NqjdSfGS84sLjii3ueSDngGbvmK25aXOVnZctSXKxuKhj3Y6Kj4pXy9ot+ZAMF+S0wkbt2rWVmJio1q1bFytszJkzR6NHj9aePXsu3omJKGwA5Ve0s0rSriSt2Lui2M4qjao3UlxYnLqFdWNnFQAAnMAwDK3ct1LT1k6zjaaMDYnVXW3vUohfiMnpUJUYhqHNRzYrITVBf+z5QwXWAklnt2PtHt5dMTVjtDB9odYdXGe7pqZPTfVr1E99Gvbh/xVRZk4rbNx11106cuSIfvjhBwUFBWnjxo1ydXXV0KFD1a1bN02ePPlSszsVhQ3AMXILcrVy70ol7UpS8oFkFRqFkv63s0pceJw61+/s1BW0AQCoKg7kHNAHaz/Q2gNrJUnBPsG6q+1dal+3PZ94w1TZedmanzZfiamJ2n9if7HHLLKoTUgbxUfGKzY0lnXaYDenFTays7M1YMAA/fXXX8rJyVFoaKgOHjyoTp06adasWfL1rdgr11LYAByvaGeVpPQkbc7YbGt3c3FTbEis4sLj1L5ue4bHAgBgp/zCfP3414/6actPOmM9IzcXN1131XW6qelN8nTzNDseYGMYhjYd3qSElATtztqtDvU6qF+jfqpdrbbZ0VCJOXW7V0lasGCBkpOTZbVa1aZNG/Xu3bvcYS8nChuAcx0+eViLdy1WUnpSsRW0vd281bl+Z8WFxalF7RZU7AEAuIjV+1Zr2tppOnjyoCSpVe1WGhM7hnWtAFQZTi9sVFYUNoDL50I7q3Rt0FVxYXFqXKMxQ2gBADjH4ZOHNW3tNK3ct1KSVMO7hu5oc4e61O/Cv5kAqhSnFTby8/P16aefKigoSDfeeKNefPFF/fe//1VMTIzeeecd1apV65LDOxOFDeDyK9pZJSk9SUt2Lyl1Z5W48DjV869nYkoAAMx1pvCMftn6i77/63vlF+bL1eKqa6Kv0T+a/6PYThMAUFU4rbBxxx136Pvvv5enp6fi4+O1Zs0a3Xrrrfrxxx8VExOjb7/99pLDOxOFDcBcBdYCrT+4XovSF5XYWaVhYEN1D+/OzioAgCpn/cH1en/N+9qXs0+S1KxWM93T7h41CGhgcjIAMI9Tt3v9+uuvFR4ersaNG2vBggXq3r271qxZowEDBujw4cOXHN6ZKGwAFUduQa5W7VulRemLSuys0iy4mbqHd2dnFQDAFS3jVIY+Tv5YS/cslSRV96qu0a1Hq1tYN6adAKjynFbYcHV11f79+1W7dm1Vq1ZNGzduVMOGDXXo0CGFhoaqsLDwksM7E4UNoGLKzsvWH7v/0KL0RSV2Vmkb0lbdw7uzswoA4IpRYC3Q9G3T9e2f3yq3IFcWWTS48WD9s/k/5etRsXcZBIDLpaz37272dmwYhk6cOCEvLy+5uLjoxIkTys7OVnZ29iUFBlC1+Xv6Kz4qXvFR8SV2Vlm5b6VW7lspbzdvdarXSd3Du7OzCgCg0tp0aJOmrpmqPdl7JEkxNWN0T+w9iqgeYXIyAKic7B6x4eLiYhsWZxhGia8ZsQHAkdKPp9uKHIdP/W+qW4BngLqFdWNnFQBApZF5OlOfrPtESbuSJJ39t2xkq5HqGdGTf8cAoBROm4qSlJR0wcfj4uLs6e6yo7ABVE6GYWhrxlYtSl+kpXuWKjvvf6PE6vjWUVx4nOLC4lQ/oL6JKQHAPoZhKDsvW8dyj+noqaPKPJ2pzNOZMmSould1VfeubvtvoFeg3FzsHmyLCqDQWqjft/+urzd9rdMFp2WRRfGR8bqt5W2sIwUAF+C0wkZlR2EDqPyKdlZJSk/Sin0rlFuQa3usaGeVUL9Qu/q055Myi5z3qVpFyGHvp4ZlzWGxWOTv6a9Ar0D5e/pzg4YrmmEYysnPsRUqznccyz2mAmtBmfv19/RXkFeQreAR5B2kQK9ABXkHFSuCeLt5MwKggthyZIumrJ6i9Kx0SVLjoMa6p909igyKNDcYAFQCTitsbNy48YKPt2jRwp7uLjsKG8CV5Xw7q6Di8/PwU6BXoAI8AxToFWg7ArwCVN2rugK8/tfu5eZldlxA0v+vNZZ/QkdPnx1dcez0sdK/trNgEeAZoCDvINthkUXHco/peO5xZZ7O1PHc43b9/ebp6lm86HHO6I9ziyABXgFysbiU50eBi8jKzdKn6z/V/J3zJZ39O+/2lrerX6N+FJ0AoIycVtgoWmPj7+trSGKNDQCmysnL0dLdS7Vi7wqdPHPSoX2X9a9KQ44dBOfo53XGIL2yPneBtUA5+TnKys2y++fk6eqpAM8AVfeuXqIQ8vdiiJ+HHzcNsFtRweJiIywyczPtLlhU96quGj41bAWGv39dlikm505ZOXb6mK14cuz0sWL/zTydqdMFp8uczyKLAr0CbYWP0oogRcURTzfPMvdblVkNqxJTE/XFhi9s/xb1bdhXw1sNl78n/+8JAPZwWmFj165dks7+A9usWTPNmjVLYWFhtsfP/boiorABAOayGlbl5OXoeO5xZeVl6Xju8RJHVu7/t+cdV35hvl39u1hcbMWP8xVDikaDBHgGyN3V3UmvFBVBUcGi6Kb/6KmjJb4u+u8Z65ky91s0JeTcURZ/P6p7VzdlylVuQW6xgkfRiI9ziyGZuZl2Fxl93H3OFj3OKYL8fURIkHdQlS4ubsvYpqlrpmrHsR2Szk6PvLfdvYquGW1yMgConC7LGht+fn7asGGDGjZsWN4uLjsKGwBQeRiGodyC3P8VPEophGTlZulY7jFl5WXpRP4Ju5/D1933fwWPi0yLYd2CisMwDJ08c7LY9I/zHfYULPw8/FTDu4btJv3vX5tZsHC0Qmuh7c9U0VSaoqJPscJIbqZdBUZXi+v/1vv42wKofx8RcqUUFnPycvT5hs81Z8ccGTLk6+6r21rcpvioeKb6AMAlKOv9e+X/VxkAcMWyWCzydveWt7u3QvxCLnp+gbXgf6M9zlMMycrN0vG8s19bDatOnjmpk2dOal/Ovov27+HqUaz4cb6RINW9qsvP048bmnIwDEOnzpwqVpg4evqobeSB7Ws7b7b9PPwuOLqi6Ib7SrnRLgtXF1fba29Y/fwfUhmGodMFp0stfBQrguQeU3ZetgqNQmWcylDGqYyLZqjmUc1WAPn7AqjnFkF83X0rZFHRMAzNTZurz9Z/ppz8HElSz/CeGtl6pAK9As0NBwBVyCUVNiwWS4X8RwYAUDW5ubiphk8N1fCpcdFzi6YonFsAOXb62HkLIbkFucovzNeRU0d05NSRi/Zv0f92gSnLtBgPVw9H/AgqrNIKFudbw8KegkU1j2oXnBJStIbFlf7zdSaLxSIfdx/5uPuorn/dC55bYC3Q8dzjpa4D8vcpMQXWAp3IP6ET+Se0J3vPBft1d3E/7wKo506JCfAKuGyjaXZk7tDUNVO17eg2SVJYQJjuib1HTYObXpbnBwD8j91TUapXr24rZhw/flz+/v5ycfnfJ1KZmZmOTehgTEUBAJRHbkFusdEg51sf5Hjucdsnt/bwdvMuXvC4wLSYivTpddGn+RcrWBw9fdTugkV1r+q26R/nW8OCgkXldO7aJ+ddB+T/v7ZnMeiiguL5FkA9t83Lzatcf45O5J/QVxu/0qyUWTJkyMvNS7c2v1UDGw+8IqYoAUBF4rSpKJMnT76UXAAAVEpebl7yqual2tVqX/TcorULLjot5v+/L7AW6HTBaZ0+cVoHThy4aP9uLm4lCx/n2S0mwDNAri6udr/ec6cfXGxr07zCvDL36+vuW3xExXnWs6BgcWWzWCzy8/STn6efGgQ0uOC5+YX5ZVoHpGh6WVZelrLyspSelX7Bfs+3Je7f1wEp2hLXMAwt2LlAn67/VFl5WZKkbg26aXSb0QryDnLUjwYAUA6XtHhoZcSIDQBARVI0RePvBY9Sp8XkZenUmVN2P4efh1+JokdRMcTTzdP26fjfp4TkFuSW+TmKChYX2tqULUPhTEVb4pY2BebvRRB7freLtsR1d3HX4VOHJUn1/Orpnnb3qEXtFs56OQAAOXlXlMLCQv3666/asmWLLBaLmjRpoiFDhsjV1f5PhC43ChsAgMosvzC/TAukFi3kaM92nqXxcfe56LamFCxQ2RRtiXuhdUAyT2eW+DPk6eqpm5vdrKFXDWXaCQBcBk6bipKamqoBAwZo3759io6OlmEY2r59u+rXr6+ZM2eqUaNGlxQcAACcn4erh2r51lIt31oXPddqWJWTl3N2O9zzFEPyCvLOu7Vpde/q8nLzugyvCri8vNy8FOIXctHdloqmlRWNoIoIjFB17+qXKSUAoKzsHrExYMAAGYahr7/+WkFBZ+cTHj16VLfeeqtcXFw0c+ZMpwR1FEZsAAAAAABQ8TltxEZSUpJWrFhhK2pIUo0aNfTyyy+rS5cu5UsLAAAAAABQDi4XP6U4T09P5eSU3MbuxIkT8vBgBXMAAAAAAHD52F3YGDRokO666y6tXLlShmHIMAytWLFCY8aM0ZAhQ5yREQAAAAAAoFR2FzbefvttNWrUSJ06dZKXl5e8vLzUpUsXRUZG6q233nJGRgAAAAAAgFLZvcZGYGCgfvvtN6WmpmrLli0yDENNmjRRZGSkM/IBAAAAAACcV5kLGzk5OfLz87N9HxkZWaKYsWrVKrVv395x6QAAAAAAAC6gzFNR+vTpU+qioZJUUFCgJ598Ul27dnVYMAAAAAAAgIspc2Hj1KlT6t27t7Kysoq1b9y4UW3bttWXX36p6dOnOzwgAAAAAADA+ZS5sLFgwQLl5ubaihtWq1UTJ05Uu3bt1Lx5c23atEn9+vVzZlYAAAAAAIBiyrzGRs2aNbVgwQL16tVLPXr0kIeHh9LS0vTtt9/quuuuc2ZGAAAAAACAUtm13WuNGjU0f/58GYah9evXa/HixRQ1AAAAAACAaSyGYRj2XnTs2DH17t1bhmFo/vz5ql69ujOyOUVWVpYCAwO1Z88e+fv7mx0HAAAAAACUIjs7W/Xr19fx48cVEBBw3vPKPBXl7yMz/Pz8tHjxYrVv317Nmze3tf/888/liHv5FO3sUr9+fZOTAAAAAACAi8nJyXFMYePvnQQEBCgiIqL8yUwSGhqqPXv2yM/PTxaLxew4ZVZUqWKkScXC+1Ix8b5UTLwvFQ/vScXE+1Ix8b5UTLwvFQ/vScVUWd8XwzCUk5Oj0NDQC55X5sLGp59+esmhKgIXFxfVq1fP7Bjl5u/vX6l+EasK3peKifelYuJ9qXh4Tyom3peKifelYuJ9qXh4Tyqmyvi+XGikRhG7Fg8FAAAAAACoSChsAAAAAACASovCRiXh6empZ599Vp6enmZHwTl4Xyom3peKifel4uE9qZh4Xyom3peKifel4uE9qZiu9PelXNu9AgAAAAAAVASM2AAAAAAAAJUWhQ0AAAAAAFBpUdgAAAAAAACVFoUNAAAAAABQaVHYqCSmTJmiiIgIeXl5qW3btlqyZInZkaq0xYsXa/DgwQoNDZXFYtGvv/5qdqQqb9KkSWrXrp38/PwUHBysoUOHatu2bWbHqvKmTp2qFi1ayN/fX/7+/urUqZMSEhLMjoW/mTRpkiwWix588EGzo1Rpzz33nCwWS7GjTp06Zseq8vbt26dbb71VNWrUkI+Pj1q1aqW1a9eaHatKCw8PL/FnxWKxaOzYsWZHq9IKCgr09NNPKyIiQt7e3mrYsKFeeOEFWa1Ws6NVeTk5OXrwwQcVFhYmb29vde7cWatXrzY7lkNR2KgEvv/+ez344IN66qmntG7dOnXt2lXx8fHavXu32dGqrJMnT6ply5Z69913zY6C/5eUlKSxY8dqxYoVmjt3rgoKCtS3b1+dPHnS7GhVWr169fTyyy9rzZo1WrNmjXr27KlrrrlGf/31l9nR8P9Wr16tadOmqUWLFmZHgaSmTZvqwIEDtmPTpk1mR6rSjh07pi5dusjd3V0JCQnavHmz3njjDQUGBpodrUpbvXp1sT8nc+fOlSTdeOONJier2l555RW9//77evfdd7Vlyxa9+uqreu211/TOO++YHa3Ku+OOOzR37lx9+eWX2rRpk/r27avevXtr3759ZkdzGLZ7rQQ6dOigNm3aaOrUqba2mJgYDR06VJMmTTIxGSTJYrHol19+0dChQ82OgnMcOXJEwcHBSkpKUrdu3cyOg3MEBQXptdde0+jRo82OUuWdOHFCbdq00ZQpUzRhwgS1atVKkydPNjtWlfXcc8/p119/1fr1682Ogv/3+OOP648//mCkbAX34IMP6vfff1dKSoosFovZcaqsQYMGqXbt2vr4449tbddff718fHz05Zdfmpisajt9+rT8/Pz022+/aeDAgbb2Vq1aadCgQZowYYKJ6RyHERsVXH5+vtauXau+ffsWa+/bt6+WLVtmUiqg4svKypJ09iYaFUNhYaG+++47nTx5Up06dTI7DiSNHTtWAwcOVO/evc2Ogv+XkpKi0NBQRURE6Oabb1ZaWprZkaq06dOnKzY2VjfeeKOCg4PVunVrffjhh2bHwjny8/P11VdfadSoURQ1THb11Vdr/vz52r59uyRpw4YNWrp0qQYMGGBysqqtoKBAhYWF8vLyKtbu7e2tpUuXmpTK8dzMDoALy8jIUGFhoWrXrl2svXbt2jp48KBJqYCKzTAMjR8/XldffbWaNWtmdpwqb9OmTerUqZNyc3NVrVo1/fLLL2rSpInZsaq87777TsnJyVfcHNvKrEOHDvriiy/UuHFjHTp0SBMmTFDnzp31119/qUaNGmbHq5LS0tI0depUjR8/Xk8++aRWrVqlcePGydPTU7fffrvZ8SDp119/1fHjxzVixAizo1R5//rXv5SVlaWrrrpKrq6uKiws1MSJE/WPf/zD7GhVmp+fnzp16qQXX3xRMTExql27tr799lutXLlSUVFRZsdzGAoblcTfK9CGYVCVBs7jvvvu08aNG6+oKnRlFh0drfXr1+v48eP66aefNHz4cCUlJVHcMNGePXv0wAMPaM6cOSU+wYF54uPjbV83b95cnTp1UqNGjfT5559r/PjxJiaruqxWq2JjY/XSSy9Jklq3bq2//vpLU6dOpbBRQXz88ceKj49XaGio2VGqvO+//15fffWVvvnmGzVt2lTr16/Xgw8+qNDQUA0fPtzseFXal19+qVGjRqlu3bpydXVVmzZt9M9//lPJyclmR3MYChsVXM2aNeXq6lpidMbhw4dLjOIAIN1///2aPn26Fi9erHr16pkdB5I8PDwUGRkpSYqNjdXq1av11ltv6YMPPjA5WdW1du1aHT58WG3btrW1FRYWavHixXr33XeVl5cnV1dXExNCknx9fdW8eXOlpKSYHaXKCgkJKVGEjYmJ0U8//WRSIpxr165dmjdvnn7++Wezo0DSo48+qscff1w333yzpLMF2l27dmnSpEkUNkzWqFEjJSUl6eTJk8rOzlZISIiGDRumiIgIs6M5DGtsVHAeHh5q27atbbXnInPnzlXnzp1NSgVUPIZh6L777tPPP/+sBQsWXFF/UV9pDMNQXl6e2TGqtF69emnTpk1av3697YiNjdUtt9yi9evXU9SoIPLy8rRlyxaFhISYHaXK6tKlS4mtw7dv366wsDCTEuFcn376qYKDg4stiAjznDp1Si4uxW8vXV1d2e61AvH19VVISIiOHTum2bNn65prrjE7ksMwYqMSGD9+vG677TbFxsaqU6dOmjZtmnbv3q0xY8aYHa3KOnHihFJTU23f79y5U+vXr1dQUJAaNGhgYrKqa+zYsfrmm2/022+/yc/PzzbKKSAgQN7e3ianq7qefPJJxcfHq379+srJydF3332nRYsWKTEx0exoVZqfn1+J9Wd8fX1Vo0YN1qUx0SOPPKLBgwerQYMGOnz4sCZMmKDs7Gw+6TTRQw89pM6dO+ull17STTfdpFWrVmnatGmaNm2a2dGqPKvVqk8//VTDhw+Xmxu3NBXB4MGDNXHiRDVo0EBNmzbVunXr9Oabb2rUqFFmR6vyZs+eLcMwFB0drdTUVD366KOKjo7WyJEjzY7mOAYqhffee88ICwszPDw8jDZt2hhJSUlmR6rSFi5caEgqcQwfPtzsaFVWae+HJOPTTz81O1qVNmrUKNvfXbVq1TJ69eplzJkzx+xYKEVcXJzxwAMPmB2jShs2bJgREhJiuLu7G6GhocZ1111n/PXXX2bHqvJmzJhhNGvWzPD09DSuuuoqY9q0aWZHgmEYs2fPNiQZ27ZtMzsK/l92drbxwAMPGA0aNDC8vLyMhg0bGk899ZSRl5dndrQq7/vvvzcaNmxoeHh4GHXq1DHGjh1rHD9+3OxYDmUxDMMwp6QCAAAAAABwaVhjAwAAAAAAVFoUNgAAAAAAQKVFYQMAAAAAAFRaFDYAAAAAAEClRWEDAAAAAABUWhQ2AAAAAABApUVhAwAAAAAAVFoUNgAAAAAAQKVFYQMAgCpmxIgRslgs5z2OHz9udsTLxmKx6Ndff72sz5meni6LxaL169cX+77o8PPzU9OmTTV27FilpKRc1mwAAFRGFDYAAKiC+vfvrwMHDhQ7fvrpJ7NjVWnz5s3TgQMHtGHDBr300kvasmWLWrZsqfnz55sdDQCACo3CBgAAVZCnp6fq1KlT7AgKCipx3k8//aSmTZvK09NT4eHheuONN4o9npeXp8cee0z169eXp6enoqKi9PHHHxc7Jzw8vMSoEHtGSTz33HNq1apVsbZFixYVG13y91EQkvT000/LYrFo8uTJtrYVK1YoOjpaAQEBmjJliiRpw4YNioqKUmBgoCZOnGg7t6jP7777Tp07d5aXl5eaNm2qRYsW2c4pLCzU6NGjFRERIW9vb0VHR+utt94q82s7V40aNVSnTh01bNhQ11xzjebNm6cOHTpo9OjRKiwsLFefAABUBRQ2AABAqdauXaubbrpJN998szZt2qTnnntOzzzzjD777DPbObfffru+++47vf3229qyZYvef/99VatWrVg/hmHohRdesI0MuRz27t2rt956S97e3ra2M2fO6MYbb1TXrl21atUqWxHkxx9/1A8//KCpU6fqxRdf1Jw5c4r19eijj+rhhx/WunXr1LlzZw0ZMkRHjx6VJFmtVtWrV08//PCDNm/erH//+9968skn9cMPP1zya3BxcdEDDzygXbt2ae3atZfcHwAAVyo3swMAAICK6c0331SvXr30zDPPSJIaN26szZs367XXXtOIESO0fft2/fDDD5o7d6569+4tSWrYsGGJfs6cOaOgoCDVqVPnsmV/6qmnNGzYMM2bN8/WlpiYqIyMDE2ePFnVqlXTlClT9OGHH+q5555T69at1bp1a82YMUMffvih+vbta7vuvvvu0/XXXy9Jmjp1qhITE/Xxxx/rsccek7u7u55//nnbuREREVq2bJl++OEH3XTTTZf8Oq666ipJZ0ePtG/f/pL7AwDgSsSIDQAAUKotW7aoS5cuxdq6dOmilJQUFRYWav369XJ1dVVcXNwF+8nOzpavr68zoxaTnJysX375RS+++GKx9tTUVNWrV882osTNza3YfyWpSZMmSk1NLXZdp06dbF+7ubkpNjZWW7ZssbW9//77io2NVa1atVStWjV9+OGH2r17t0Nei2EYks4ucgoAAEpHYQMAAJTKMIwSN9RFN9qSik3zOJ/s7GydPHlSoaGhDs93Pg8//LAeeeQRhYSElOv6c1/j+RT9XH744Qc99NBDGjVqlObMmaP169dr5MiRys/PL9dz/11RASUiIsIh/QEAcCWisAEAAErVpEkTLV26tFjbsmXL1LhxY7m6uqp58+ayWq1KSko6bx+rV6+WxWIpsfins0yfPl3bt2/XI488UuKxhg0bau/evTpx4oQkqaCgoNh/JWnz5s1q1KhRsetWrFhh+7qgoEBr1661TRFZsmSJOnfurHvvvVetW7dWZGSkduzY4ZDXYrVa9fbbbysiIkKtW7d2SJ8AAFyJKGwAAIBSPfzww5o/f75efPFFbd++XZ9//rneffddW9EgPDxcw4cP16hRo/Trr79q586dWrRokW3hzIULF2rs2LEaOHCggoODz/s8V111lX755ZcLZjEMQ7m5ubajaEREXl5esfNeffVVTZgwQT4+PiX66N+/v6pXr64HH3xQ27dv17333itJev7557Vu3Tp99913+vnnnzV69Ohi17333nv65ZdftHXrVo0dO1bHjh3TqFGjJEmRkZFas2aNZs+ere3bt+uZZ57R6tWrL/hazufo0aM6ePCg0tLSNH36dPXu3VurVq3Sxx9/LFdX13L1CQBAVUBhAwAAlKpNmzb64Ycf9N1336lZs2b697//rRdeeEEjRoywnTN16lTdcMMNuvfee3XVVVfpzjvv1MmTJyVJo0aNUteuXfXll19e8Hm2bdumrKysC56zceNGeXt7245+/fpJUokFSSMjIzV8+PBS+/D09NT333+vpKQktWvXzjYK4sYbb9RNN92ku+66S48//rgGDBhQ7LqXX35Zr7zyilq2bKklS5bot99+U82aNSVJY8aM0XXXXadhw4apQ4cOOnr0qK1gYq/evXsrJCREzZs31+OPP66YmBht3LhRPXr0KFd/AABUFRajLBNJAQAAKqDAwEAdP3683NdbLBb98ssvGjp0aInH0tPTFRERoXXr1l22qTQAAMB+jNgAAACVlpeXl9kRAACAyShsAACASuvgwYNmRwAAACZjKgoAAAAAAKi0GLEBAAAAAAAqLQobAAAAAACg0qKwAQAAAAAAKi0KGwAAAAAAoNKisAEAAAAAACotChsAAAAAAKDSorABAAAAAAAqLQobAAAAAACg0qKwAQAAAAAAKq3/A0mW9lTRjVigAAAAAElFTkSuQmCC",
+      "text/plain": [
+       "<Figure size 1300x400 with 1 Axes>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "\n",
+    "plt.rcParams[\"figure.figsize\"] = (13,4)\n",
+    "fig, ax = plt.subplots()\n",
+    "fig.suptitle('Зависимость результата от № ID')\n",
+    "\n",
+    "ax.plot(df_agg['right_symbol'], df_agg['conv'], color = 'green', alpha=.7)\n",
+    "ax.set_xlabel('Посл. цифра ID')\n",
+    "ax.set_ylabel('Конверсия в использование предложения')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "12a2a181-2136-4cb5-91ce-271a813bf1ca",
+   "metadata": {},
+   "source": [
+    "на вскидку - можем предположить, что распределение выборки было неверным, на что указывает почти в два раза более высокая конверсия по ID, заказчивающимся на 0"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "cf171f2f-efa1-4d0b-8f4b-9bdd41719aa0",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(9), np.int64(8), np.int64(4), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(0), np.int64(4), np.int64(8), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(7), np.int64(5), np.int64(3), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(5), np.int64(6), np.int64(9), np.int64(1))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(5), np.int64(7), np.int64(3), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(3), np.int64(8), np.int64(0), np.int64(2))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(3), np.int64(0), np.int64(8), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(2), np.int64(7), np.int64(8), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(5), np.int64(7), np.int64(9), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(7), np.int64(2), np.int64(8), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(4), np.int64(9), np.int64(6), np.int64(1), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(4), np.int64(3), np.int64(9), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(3), np.int64(8), np.int64(2), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(7), np.int64(3), np.int64(0), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(5), np.int64(1), np.int64(4), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(1), np.int64(6), np.int64(2), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(0), np.int64(2), np.int64(7), np.int64(8), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(0), np.int64(9), np.int64(4), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(2), np.int64(4), np.int64(9), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(5), np.int64(8), np.int64(6), np.int64(2))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(7), np.int64(6), np.int64(3), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(2), np.int64(6), np.int64(4), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(1), np.int64(9), np.int64(3), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(8), np.int64(4), np.int64(2), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(0), np.int64(4), np.int64(8), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(4), np.int64(9), np.int64(1), np.int64(5), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(1), np.int64(8), np.int64(5), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(3), np.int64(7), np.int64(2), np.int64(1))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(2), np.int64(6), np.int64(8), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(1), np.int64(6), np.int64(3), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(3), np.int64(9), np.int64(2), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(3), np.int64(0), np.int64(7), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(3), np.int64(5), np.int64(0), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(3), np.int64(0), np.int64(5), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(6), np.int64(8), np.int64(1), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(4), np.int64(3), np.int64(0), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(5), np.int64(1), np.int64(2), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(7), np.int64(5), np.int64(9), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(9), np.int64(2), np.int64(0), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(8), np.int64(0), np.int64(7), np.int64(1))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(2), np.int64(9), np.int64(4), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(5), np.int64(0), np.int64(7), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(4), np.int64(1), np.int64(0), np.int64(7), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(9), np.int64(5), np.int64(3), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(7), np.int64(9), np.int64(5), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(9), np.int64(3), np.int64(2), np.int64(7), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(7), np.int64(2), np.int64(5), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(5), np.int64(8), np.int64(6), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(4), np.int64(5), np.int64(9), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(0), np.int64(7), np.int64(4), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(8), np.int64(3), np.int64(2), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(3), np.int64(6), np.int64(2), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(4), np.int64(1), np.int64(5), np.int64(2))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(9), np.int64(4), np.int64(8), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(2), np.int64(1), np.int64(7), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(4), np.int64(0), np.int64(9), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(9), np.int64(8), np.int64(6), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(4), np.int64(1), np.int64(0), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(2), np.int64(6), np.int64(0), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(0), np.int64(2), np.int64(1), np.int64(9), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(0), np.int64(1), np.int64(4), np.int64(5), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(4), np.int64(1), np.int64(7), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(9), np.int64(8), np.int64(4), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(1), np.int64(0), np.int64(5), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(5), np.int64(6), np.int64(2), np.int64(1))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(9), np.int64(0), np.int64(7), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(1), np.int64(2), np.int64(3), np.int64(8))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(1), np.int64(8), np.int64(7), np.int64(4), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(3), np.int64(9), np.int64(0), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(3), np.int64(0), np.int64(5), np.int64(7))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(8), np.int64(2), np.int64(1), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(0), np.int64(4), np.int64(3), np.int64(9))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(4), np.int64(2), np.int64(1), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(7), np.int64(1), np.int64(3), np.int64(9), np.int64(0))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(5), np.int64(7), np.int64(3), np.int64(8), np.int64(4))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(2), np.int64(9), np.int64(7), np.int64(3), np.int64(6))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(6), np.int64(7), np.int64(2), np.int64(4), np.int64(3))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(8), np.int64(1), np.int64(0), np.int64(2), np.int64(5))\n",
+      "\n",
+      "Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(3), np.int64(8), np.int64(5), np.int64(9), np.int64(6))\n",
+      "\n",
+      "Распределения равны. P_value = 0.06343637463690968\n",
+      "Значения колонки to_10 для тестовой группы = (np.int64(4), np.int64(6), np.int64(5), np.int64(0), np.int64(3))\n",
+      "\n"
+     ]
+    }
+   ],
+   "source": [
+    "### 2. Делаем разбиение клиентов по группам (контроль и тест) в зависимости от остатка деления ID на 10. Расчитываем АА-тест.\n",
+    "\n",
+    "df['to_10'] = df['id_client'] % 10\n",
+    "unique_values = df['to_10'].unique()\n",
+    "\n",
+    "while True:\n",
+    "    try:\n",
+    "        selected_values = tuple(np.random.choice(unique_values, size = 5, replace = False))\n",
+    "        df['group_10'] = np.where(df['to_10'].isin(selected_values), 'test', 'control')\n",
+    "        r1 = df[df['group_10'] == 'control']['flag_conv']\n",
+    "        r2 = df[df['group_10'] == 'test']['flag_conv']\n",
+    "        alpha = 0.05\n",
+    "        s, p = mannwhitneyu(r1, r2)\n",
+    "        if p > alpha:\n",
+    "            break\n",
+    "        else:\n",
+    "            print('Распределения не равны, сетап(разбиение) для эксперимента выбран некорректно')\n",
+    "            print(f'Значения колонки to_10 для тестовой группы = {selected_values}')\n",
+    "            print()\n",
+    "    except:\n",
+    "        print('Нет данных')\n",
+    "print(f'Распределения равны. P_value = {p}')\n",
+    "print(f'Значения колонки to_10 для тестовой группы = {selected_values}')\n",
+    "print()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "e845132e-f764-404b-bb92-8177dcbc81bb",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>group_10</th>\n",
+       "      <th>cnt_client</th>\n",
+       "      <th>conv</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>control</td>\n",
+       "      <td>1573</td>\n",
+       "      <td>0.595677</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>test</td>\n",
+       "      <td>1596</td>\n",
+       "      <td>0.627820</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "  group_10  cnt_client      conv\n",
+       "0  control        1573  0.595677\n",
+       "1     test        1596  0.627820"
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df_info = df.groupby('group_10').agg(cnt_client = ('id_client', 'count'), conv = ('flag_conv', 'mean')).reset_index()\n",
+    "df_info.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "aa4677f0-3129-4f54-a6a1-463fadb94556",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "-1.856860558249869\n",
+      "p value = 0.06342378196333834. Принимаем H0 -> нет стат. значимой разницы между выборками.\n",
+      "\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "s1, p1 = ttest_ind(r1, r2)\n",
+    "print(s1)\n",
+    "alpha = 0.05\n",
+    "if p1 >= alpha:\n",
+    "    print(f'p value = {p1}. Принимаем H0 -> нет стат. значимой разницы между выборками.')\n",
+    "else:\n",
+    "    print(f'p value = {p1}. Принимаем H1 -> есть стат. значимая разница между выборками.')\n",
+    "print()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "a0a07aa3-3b12-4448-a3ce-a914fc55bf99",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id_client</th>\n",
+       "      <th>flag_conv</th>\n",
+       "      <th>right_symbol</th>\n",
+       "      <th>to_10</th>\n",
+       "      <th>group_10</th>\n",
+       "      <th>to_2</th>\n",
+       "      <th>group_2</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>1345321</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1</td>\n",
+       "      <td>1</td>\n",
+       "      <td>control</td>\n",
+       "      <td>1</td>\n",
+       "      <td>control</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1345322</td>\n",
+       "      <td>0</td>\n",
+       "      <td>2</td>\n",
+       "      <td>2</td>\n",
+       "      <td>control</td>\n",
+       "      <td>0</td>\n",
+       "      <td>test</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>1345330</td>\n",
+       "      <td>0</td>\n",
+       "      <td>0</td>\n",
+       "      <td>0</td>\n",
+       "      <td>test</td>\n",
+       "      <td>0</td>\n",
+       "      <td>test</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>1345338</td>\n",
+       "      <td>1</td>\n",
+       "      <td>8</td>\n",
+       "      <td>8</td>\n",
+       "      <td>control</td>\n",
+       "      <td>0</td>\n",
+       "      <td>test</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>1345342</td>\n",
+       "      <td>0</td>\n",
+       "      <td>2</td>\n",
+       "      <td>2</td>\n",
+       "      <td>control</td>\n",
+       "      <td>0</td>\n",
+       "      <td>test</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id_client  flag_conv right_symbol  to_10 group_10  to_2  group_2\n",
+       "0    1345321          0            1      1  control     1  control\n",
+       "1    1345322          0            2      2  control     0     test\n",
+       "2    1345330          0            0      0     test     0     test\n",
+       "3    1345338          1            8      8  control     0     test\n",
+       "4    1345342          0            2      2  control     0     test"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "### 3. Распределяем клиентов по группам (контроль и тест) на основе остатка от деления ID на 2. Расчитываем результаты АА-теста.\n",
+    "\n",
+    "df['to_2'] = df['id_client'] % 2\n",
+    "df['group_2'] = np.where(df['to_2'] == 0, 'test', 'control')\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "9dacc212-e505-45b5-92e0-b747741123de",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>group_2</th>\n",
+       "      <th>cnt_client</th>\n",
+       "      <th>conv</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>control</td>\n",
+       "      <td>1583</td>\n",
+       "      <td>0.591914</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>test</td>\n",
+       "      <td>1586</td>\n",
+       "      <td>0.631778</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   group_2  cnt_client      conv\n",
+       "0  control        1583  0.591914\n",
+       "1     test        1586  0.631778"
+      ]
+     },
+     "execution_count": 12,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df_info1 = df.groupby('group_2').agg(cnt_client = ('id_client', 'count'), conv = ('flag_conv', 'mean')).reset_index()\n",
+    "df_info1.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "14ca1787-3548-4880-983e-c04fe0259138",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Распределения не равны\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "alpha = 0.05\n",
+    "ss, pp = mannwhitneyu(df[df['group_2'] == 'control']['flag_conv'], df[df['group_2'] == 'test']['flag_conv'])\n",
+    "if pp > alpha:\n",
+    "    print('Распределения равны')\n",
+    "    print('P_value = ',pp)\n",
+    "    print()\n",
+    "else:\n",
+    "    print('Распределения не равны')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "id": "516495db-8b9c-4219-8416-8e496205576a",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "-2.303661902563631\n",
+      "p value = 0.021306090686166332. Принимаем H1 -> есть стат. значимая разница между выборками.\n",
+      "\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "ss1, pp1 = ttest_ind(df[df['group_2'] == 'control']['flag_conv'], df[df['group_2'] == 'test']['flag_conv'])\n",
+    "print(ss1)\n",
+    "alpha = 0.05\n",
+    "if pp1 >= alpha:\n",
+    "    print(f'p value = {pp1}. Принимаем H0 -> нет стат. значимой разницы между выборками.')\n",
+    "else:\n",
+    "    print(f'p value = {pp1}. Принимаем H1 -> есть стат. значимая разница между выборками.')\n",
+    "print()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "1da387ce-9042-4b6c-ba00-c5ad15baf805",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>iter</th>\n",
+       "      <th>stat_crit</th>\n",
+       "      <th>p_value</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>1</td>\n",
+       "      <td>-0.597223</td>\n",
+       "      <td>0.550401</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>2</td>\n",
+       "      <td>-0.087025</td>\n",
+       "      <td>0.930657</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>3</td>\n",
+       "      <td>-0.815917</td>\n",
+       "      <td>0.414609</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>4</td>\n",
+       "      <td>-1.180495</td>\n",
+       "      <td>0.237892</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>5</td>\n",
+       "      <td>-0.670118</td>\n",
+       "      <td>0.502832</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   iter  stat_crit   p_value\n",
+       "0     1  -0.597223  0.550401\n",
+       "1     2  -0.087025  0.930657\n",
+       "2     3  -0.815917  0.414609\n",
+       "3     4  -1.180495  0.237892\n",
+       "4     5  -0.670118  0.502832"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "### 4. Распределяем клиентов по группам (контроль и тест) с помощью функции sample (1000 разбиений) из библиотеки pandas и считаем статистическую значимость разниц.\n",
+    "\n",
+    "results = []\n",
+    "\n",
+    "for i in range(1,1000):\n",
+    "    part_50 = df.sample(frac = 0.5)\n",
+    "    rest_part_50 = df.drop(part_50.index)\n",
+    "\n",
+    "    s_a, p_a = ttest_ind(part_50['flag_conv'], rest_part_50['flag_conv'])\n",
+    "\n",
+    "    results.append({'iter':i,'stat_crit':s_a,'p_value':p_a})\n",
+    "    df_aa = pd.DataFrame(results)\n",
+    "\n",
+    "df_aa.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "id": "b7b78452-cf57-4094-be1d-26e79d5bc9ac",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "iter         0.047047\n",
+       "stat_crit    0.047047\n",
+       "p_value      0.047047\n",
+       "dtype: float64"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "df_aa[df_aa['p_value']<=0.05].count() / df_aa.count()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "id": "90a73d2e-c7fc-4c24-bbc6-64b710b3e886",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Среднее =  0.5087249063347672\n",
+      "Сигма =  0.2908079169180479\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "m = df_aa['p_value'].mean()\n",
+    "sig = df_aa['p_value'].std()\n",
+    "\n",
+    "print('Среднее = ', m)\n",
+    "print('Сигма = ', sig)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "id": "bb71b25a-86ea-4e58-b09a-b70eaf82bb44",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Доля случаев, в которых разница между группами есть -  0.0\n"
+     ]
+    }
+   ],
+   "source": [
+    "\n",
+    "df_two_sigma = df_aa[(df_aa['p_value'] >= m - 2*sig) & (df_aa['p_value'] <= m + 2*sig)]\n",
+    "print('Доля случаев, в которых разница между группами есть - ', 1 - (df_two_sigma.count()['iter'] / df_aa.count()['iter']))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "id": "c233c61f-abc7-4e03-bd8d-dee43d1baf51",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Требуемое кол-во наблюдений в самой маленькой группе = 9499.449393436595\n",
+      "Общее требуемое кол-во наблюдений в двух группах = 18998.89878687319\n"
+     ]
+    }
+   ],
+   "source": [
+    "### 5. Cколько наблюдений потребуется для АБ Теста (MDE = 2 проц.п, альфа и бета на дефолтном уровне и дисперсия выборки не изменится от воздействия В).\n",
+    "\n",
+    "m = df['flag_conv'].mean()\n",
+    "sigma = m*(1-m)\n",
+    "n = 16 * sigma / (0.02**2)\n",
+    "\n",
+    "print(f'Требуемое кол-во наблюдений в самой маленькой группе = {n}')\n",
+    "print(f'Общее требуемое кол-во наблюдений в двух группах = {n * 2}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "063b329a-62ba-44cb-a716-4040cf2ba368",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python [conda env:base] *",
+   "language": "python",
+   "name": "conda-base-py"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.13.5"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
